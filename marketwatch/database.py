@@ -47,6 +47,3 @@ class Database():
         Retrieves orders from the database
         """
         raise NotImplementedError
-
-    def enabled(self):
-        return self.__enabled
