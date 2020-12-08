@@ -136,7 +136,7 @@ class API():
         req_url = self.__REGION_TYPES.format(self.__region_id)
         return self.__fetch_api_page(worker, type_page, req_url)
 
-    def __fetch_type_order_page(self, worker, number, type_id, force=False):
+    def __fetch_type_order_page(self, worker, number, type_id):
         with self.__order_page_lock:
             if not type_id in self.__order_pages:
                 order_pages = self.__order_pages[type_id] = []
@@ -151,7 +151,7 @@ class API():
 
         req_url = self.__REGION_ORDERS.format(self.__region_id)
         max_pages, orders = self.__fetch_api_page(
-            worker, order_page, req_url, force, type_id=type_id)
+            worker, order_page, req_url, type_id=type_id)
 
         if not orders:
             return (max_pages, orders)
@@ -170,16 +170,11 @@ class API():
 
         return processed
 
-    def __fetch_api_page(self, worker, page, req_url, force=False, **kwargs):
+    def __fetch_api_page(self, worker, page, req_url, **kwargs):
         req_params = {'page': page.number}
         req_params.update(kwargs)
 
-        if force:
-            req_etag = ""
-        else:
-            req_etag = page.etag
-
-        request, etag = self.__fetch_api(worker, req_url, req_params, req_etag)
+        request, etag = self.__fetch_api(worker, req_url, req_params, page.etag)
         page.etag = etag
 
         if not request:
