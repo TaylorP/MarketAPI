@@ -55,7 +55,7 @@ class Watcher():
 
         self.__region_apis = {}
         for region_id in config['regions']:
-            self.__region_apis[region_id] = api.API(region_id)
+            self.__region_apis[region_id] = api.API(config, region_id)
 
     def watch(self):
         """

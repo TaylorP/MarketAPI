@@ -66,7 +66,7 @@ class API():
             self.etag = ""
             self.number = number
 
-    def __init__(self, region_id):
+    def __init__(self, config, region_id):
         """
         Constructs a new API instance from the specified region id.
         """
@@ -77,6 +77,7 @@ class API():
         self.__type_pages = {}
 
         self.__region_id = region_id
+        self.__user_agent = config['agent']
 
     def region_id(self):
         """
@@ -169,8 +170,7 @@ class API():
 
         return processed
 
-    @classmethod
-    def __fetch_api_page(cls, worker, page, req_url, force=False, **kwargs):
+    def __fetch_api_page(self, worker, page, req_url, force=False, **kwargs):
         req_params = {'page': page.number}
         req_params.update(kwargs)
 
@@ -179,7 +179,7 @@ class API():
         else:
             req_etag = page.etag
 
-        request, etag = cls.__fetch_api(worker, req_url, req_params, req_etag)
+        request, etag = self.__fetch_api(worker, req_url, req_params, req_etag)
         page.etag = etag
 
         if not request:
@@ -198,9 +198,11 @@ class API():
         worker.stats().update(stats.Stats.REQUEST, total=1, changed=1)
         return (max_pages, request.json())
 
-    @classmethod
-    def __fetch_api(cls, worker, url, params, etag):
-        headers = {'If-None-Match': etag}
+    def __fetch_api(self, worker, url, params, etag):
+        headers = {
+            'If-None-Match': etag,
+            'User-Agent': self.__user_agent
+        }
         request = worker.session().get(url, params=params, headers=headers)
 
         try:
