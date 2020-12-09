@@ -33,7 +33,18 @@ class RedisDatabase(database.Database):
     """
     Redis database implementation that stores market data to a Redis DB.
     """
-    __REGION_TYPE_SET = 'rt:{}:{}'
+    __MARKET_GROUP_SET      = 'mg'
+    __MARKET_GROUP_INFO_KEY = 'mgi:{}'
+    __MARKET_GROUP_TYPE_KEY = 'mgt:{}'
+
+    __REGION_TYPE_SET       = 'rt:{}:{}'
+
+    __MARKET_GROUP_FIELDS = [
+        ('description'      , str),
+        ('name'             , str),
+        ('market_group_id'  , int),
+        ('parent_group_id'  , int),
+    ]
 
     def __init__(self, config):
         database.Database.__init__(self)
@@ -44,9 +55,63 @@ class RedisDatabase(database.Database):
             db = config['database'])
 
     @classmethod
+    def __group_info_name(cls, group_id):
+        return cls.__MARKET_GROUP_INFO_KEY.format(group_id)
+
+    @classmethod
+    def __group_type_name(cls, group_id):
+        return cls.__MARKET_GROUP_TYPE_KEY.format(group_id)
+
+    @classmethod
     def __type_set_name(cls, region_id, type_id):
-        return cls.__REGION_TYPE_SET.format(
-            region_id, type_id)
+        return cls.__REGION_TYPE_SET.format(region_id, type_id)
+
+    @classmethod
+    def __format_fields(cls, field_spec, field_dict):
+        fields = {}
+        for field_key, field_type in field_spec:
+            if not field_key in field_dict:
+                fields[field_key] = field_type()
+            else:
+                fields[field_key] = field_type(field_dict[field_key])
+        return fields
+
+    def add_market_groups(self, worker, group_ids):
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                for group_id in group_ids:
+                    conn.sadd(self.__MARKET_GROUP_SET, group_id)
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(group_ids),
+            changed=len(group_ids),
+            runtime=timer.elapsed())
+
+    def add_market_group_info(self, worker, group_infos):
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                for group_info in group_infos:
+                    group_id = group_info['market_group_id']
+                    conn.hset(
+                        self.__group_info_name(group_id),
+                        mapping=self.__format_fields(
+                            self.__MARKET_GROUP_FIELDS,
+                            group_info))
+
+                    if len(group_info['types']):
+                        group_types = self.__group_type_name(group_id)
+                        conn.delete(group_types)
+                        conn.lpush(group_types, *group_info['types'])
+
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(group_infos),
+            changed=len(group_info),
+            runtime=timer.elapsed())
 
     def add_orders(self, worker, region_id, orders):
         with stats.Stats.Timer() as timer:
@@ -63,8 +128,8 @@ class RedisDatabase(database.Database):
 
         worker.stats().update(
             stats.Stats.UPDATE,
-            total=len(orders),
-            changed=len(orders),
+            total=len(orders)*3,
+            changed=len(orders)*3,
             runtime=timer.elapsed())
 
     def get_orders(self, region_id, type_id):
@@ -78,5 +143,14 @@ class RedisDatabase(database.Database):
                 self.__connection.srem(set_name, order_id)
             else:
                 orders.append(order_fields)
-
         return orders
+
+    def get_groups(self):
+        group_ids = self.__connection.smembers(self.__MARKET_GROUP_SET)
+        return [int(group_id) for group_id in group_ids]
+
+    def get_group_info(self, group_id):
+        group_info = self.__connection.hgetall(self.__group_info_name(group_id))
+        group_info['types'] = self.__connection.lrange(
+            self.__group_type_name(group_id), 0, -1)
+        return group_info

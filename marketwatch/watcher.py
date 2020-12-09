@@ -25,19 +25,43 @@ Core watcher classes for continually fetching and storing data from the ESI
 market endpoints.
 """
 
-import gc
 import time
+import schedule
 
 from . import api
 from . import stats
+from . import utils
 from . import worker
 
 class Watcher():
     """
     Continually updates ESI market data
     """
+    class _UpdateGroupInfoTask():
+        def __init__(self, global_api, group_ids):
+            self.__global_api = global_api
+            self.__group_ids = group_ids
 
-    class _FetchUpdateTask():
+        def __call__(self, pool, worker):
+            group_infos = []
+            for group_id in self.__group_ids:
+                group_infos.append(
+                    self.__global_api.fetch_market_group_info(worker, group_id))
+            worker.database().add_market_group_info(worker, group_infos)
+
+    class _UpdateGroupsTask():
+        def __init__(self, global_api):
+            self.__global_api = global_api
+
+        def __call__(self, pool, worker):
+            group_ids = self.__global_api.fetch_market_groups(worker)
+            worker.database().add_market_groups(worker, group_ids)
+
+            for sub_list in utils.list_chunks(group_ids, 8):
+                pool.enqueue(
+                    Watcher._UpdateGroupInfoTask(self.__global_api, sub_list))
+
+    class _UpdateOrdersTask():
         def __init__(self, region_api, type_id=None):
             self.__region_api = region_api
             self.__type_id = type_id
@@ -51,6 +75,9 @@ class Watcher():
 
     def __init__(self, config):
         self.__config = config
+        self.__fetch_delay = config['fetch_delay']
+        self.__global_api = api.API(config, 0)
+        self.__wait_delay = config['wait_delay']
         self.__worker_pool = worker.WorkerPool(config)
 
         self.__region_apis = {}
@@ -62,20 +89,22 @@ class Watcher():
         Enters a blocking loop that fetches data, updates the database and
         sleeps for the remaning time as defined in the config
         """
+        schedule.every().day.at("11:30").do(
+            self.__update_groups).run()
+        return
+        schedule.every(self.__fetch_delay).seconds.do(
+            self.__update_orders).run()
+
         while True:
-            self.__worker_pool.log().info("Updating orders for all regions")
+            schedule.run_pending()
+            self.__worker_pool.wait()
+            time.sleep(self.__wait_delay)
 
-            with stats.Stats.Timer() as timer:
-                for _, region_api in self.__region_apis.items():
-                    self.__worker_pool.enqueue(
-                        Watcher._FetchUpdateTask(region_api))
-                self.__worker_pool.wait()
+    def __update_groups(self):
+        self.__worker_pool.log().info("Updating market groups")
+        self.__worker_pool.enqueue(Watcher._UpdateGroupsTask(self.__global_api))
 
-            gc.collect()
-
-            wait_time = max(0, self.__config['min_time'] - timer.elapsed())
-            msg = "Updated in {:.2f} seconds, waiting for {:.2f} seconds".format(
-                timer.elapsed(), wait_time)
-            self.__worker_pool.log().info(msg)
-
-            time.sleep(wait_time)
+    def __update_orders(self):
+        self.__worker_pool.log().info("Updating orders for all regions")
+        for _, region_api in self.__region_apis.items():
+            self.__worker_pool.enqueue(Watcher._UpdateOrdersTask(region_api))

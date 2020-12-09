@@ -21,7 +21,7 @@
 #
 
 """
-Defines an regional API endpoint for fetching orders from ESI.
+Defines an API endpoint for fetching orders and static data from ESI.
 """
 
 import datetime
@@ -35,6 +35,8 @@ class API():
     Contains metadata about an update operation for a specific region, and
     methods for making ESI API calls. Methods are thread safe.
     """
+
+    __MARKET_GROUPS = 'https://esi.evetech.net/latest/markets/groups/{}'
 
     __REGION_ORDERS = 'https://esi.evetech.net/latest/markets/{}/orders/'
     __REGION_TYPES  = 'https://esi.evetech.net/latest/markets/{}/types/'
@@ -85,6 +87,20 @@ class API():
         """
         return self.__region_id
 
+    def fetch_market_groups(self, worker):
+        """
+        Fetches the list of market group ids
+        """
+        return self.__fetch_unpaged(
+            worker, '', self.__MARKET_GROUPS.format(''))
+
+    def fetch_market_group_info(self, worker, group_id):
+        """
+        Fetches the info for a particular market order
+        """
+        return self.__fetch_unpaged(
+            worker, '', self.__MARKET_GROUPS.format(group_id))
+
     def fetch_type_orders(self, worker, type_id=None):
         """
         Fetches orders for the specified item type ID
@@ -124,6 +140,24 @@ class API():
 
         worker.stats().update(stats.Stats.REQUEST, runtime=timer.elapsed())
         return data_pages
+
+    def __fetch_unpaged(self, worker, etag, req_url, **kwargs):
+        num_errors = 3
+
+        data = None
+        with stats.Stats.Timer() as timer:
+            while True:
+                success, data = self.__fetch_api_unpaged(
+                    worker, etag, req_url, **kwargs)
+
+                if success or num_errors == 0:
+                    break
+
+                num_errors -= 1
+                time.sleep(0.5)
+
+        worker.stats().update(stats.Stats.REQUEST, runtime=timer.elapsed())
+        return data
 
     def __fetch_type_page(self, worker, number):
         with self.__type_page_lock:
@@ -192,6 +226,20 @@ class API():
 
         worker.stats().update(stats.Stats.REQUEST, total=1, changed=1)
         return (max_pages, request.json())
+
+    def __fetch_api_unpaged(self, worker, etag, req_url, **kwargs):
+        request, etag = self.__fetch_api(worker, req_url, kwargs, etag)
+
+        if not request:
+            worker.stats().update(stats.Stats.REQUEST, total=1, failure=1)
+            return (False, None)
+
+        if request.status_code == 304:
+            worker.stats().update(stats.Stats.REQUEST, total=1)
+            return (True, None)
+
+        worker.stats().update(stats.Stats.REQUEST, total=1, changed=1)
+        return (True, request.json())
 
     def __fetch_api(self, worker, url, params, etag):
         headers = {

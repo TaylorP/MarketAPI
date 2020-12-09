@@ -1,25 +1,26 @@
 from marketwatch import redis
 
 CONFIG = {
-    "db_type"   : redis.RedisDatabase,
-    "db_opts"   : {
-        "host"      : "localhost",
-        "port"      : 6379,
-        "database"  : 0,
-        "enabled"   : False
+    "db_type"       : redis.RedisDatabase,
+    "db_opts"       : {
+        "host"          : "localhost",
+        "port"          : 6379,
+        "database"      : 0,
+        "enabled"       : False
     },
 
-    "pool_size" : 1,
-    "min_time"  : 600,
+    "pool_size"     : 12,
+    "fetch_delay"   : 600,
+    "wait_delay"    : 30,
 
-    "log_dir"   : "./logs",
-    "log_size"  : 65536,
-    "log_count" : 5,
-    "log_shell" : True,
+    "log_dir"       : "./logs",
+    "log_size"      : 65536,
+    "log_count"     : 5,
+    "log_shell"     : True,
 
-    "agent"     : "mcsheepeater/marketwatch 1.0",
+    "agent"         : "mcsheepeater/marketwatch 1.0",
 
-    "regions": [
+    "regions"       : [
         10000001, 10000002, 10000003, 10000004, 10000005, 10000006, 10000007,
         10000008, 10000009, 10000010, 10000011, 10000012, 10000013, 10000014,
         10000015, 10000016, 10000017, 10000018, 10000019, 10000020, 10000021,

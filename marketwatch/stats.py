@@ -83,6 +83,8 @@ class Stats():
 
         for i in range(self.NUM_STATS):
             name = self.__NAMES[i]
+            if not self.total(i):
+                continue
             log.info("\t[%s] totals:\t%d", name, self.total(i))
             log.info("\t[%s] changed:\t%d", name, self.changed(i))
             log.info("\t[%s] failures:\t%d", name, self.failure(i))
