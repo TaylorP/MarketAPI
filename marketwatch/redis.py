@@ -233,7 +233,10 @@ class RedisDatabase(database.Database):
             if not encoded_order:
                 self.__connection.srem(set_name, order_id)
             else:
-                orders.append(self.__decode_order(encoded_order))
+                ttl = self.__connection.ttl(order_id)
+                order_fields = self.__decode_order(encoded_order)
+                order_fields['age'] = (self.__MARKET_ORDER_TTL - ttl)
+                orders.append(order_fields)
 
         return orders
 
