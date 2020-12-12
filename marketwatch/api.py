@@ -53,6 +53,7 @@ class API():
         Utility for tracking a paged resource from ESI. Tracks a page number
         and caching etag
         """
+
         def __init__(self, number):
             self.etag = ""
             self.number = number
@@ -61,7 +62,12 @@ class API():
     def __init__(self, config, region_id):
         """
         Constructs a new API instance from the specified region id.
+
+        Args:
+            config: Configuration options for this API instance.
+            region_id: The ID of the region that should be used for API calls.
         """
+
         self.__order_page_lock = threading.Lock()
         self.__order_pages = {}
 
@@ -75,33 +81,67 @@ class API():
         """
         Returns the region ID for this API instance
         """
+
         return self.__region_id
 
     def fetch_market_groups(self, worker):
         """
         Fetches the list of market group ids
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+
+        Returns:
+            The list of valid market group IDs.
         """
+
         return self.__fetch_unpaged(
             worker, '', self.__MARKET_GROUPS.format(''))
 
     def fetch_market_group_info(self, worker, group_id):
         """
         Fetches the info for a particular market order
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            group_id: The market group ID to fetch
+
+        Returns:
+            Market group info fields for the specified ID.
         """
+
         return self.__fetch_unpaged(
             worker, '', self.__MARKET_GROUPS.format(group_id))
 
     def fetch_type_orders(self, worker, type_id=None, callback=None):
         """
         Fetches orders for the specified item type ID
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            type_id: The optional item type ID to use as a filter
+            callback: An optional callable to invoke for each order page.
+
+        Returns:
+            If not callback was specified, returns the list of market order
+            pages, and the list of order IDs that were still cached.
         """
+
         return self.__fetch_paged(
             worker, callback, API.__fetch_type_order_page, type_id)
 
     def fetch_types(self, worker):
         """
         Fetches the list of type IDs for the region
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+
+        Returns:
+            The list of item type IDs available on the market in the
+            region associated with this API instance.
         """
+
         return self.__fetch_paged(worker, None, API.__fetch_type_page)
 
     def __fetch_paged(self, worker, callback, func, *args, **kwargs):
