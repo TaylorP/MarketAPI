@@ -9,7 +9,7 @@ CONFIG = {
         "enabled"       : False
     },
 
-    "pool_size"     : 12,
+    "pool_size"     : 1,
     "fetch_delay"   : 600,
     "wait_delay"    : 30,
 

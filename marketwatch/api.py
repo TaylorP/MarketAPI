@@ -24,7 +24,6 @@
 Defines an API endpoint for fetching orders and static data from ESI.
 """
 
-import datetime
 import threading
 import time
 
@@ -36,28 +35,18 @@ class API():
     methods for making ESI API calls. Methods are thread safe.
     """
 
+    # The API endpoint for requesting market group IDs and market group
+    # info
     __MARKET_GROUPS = 'https://esi.evetech.net/latest/markets/groups/{}'
 
+    # The API endpoint for requesting orders in a region, optionally with
+    # a specified item type ID filter
     __REGION_ORDERS = 'https://esi.evetech.net/latest/markets/{}/orders/'
+
+    # The API endpoint for requesting the item type IDs wih active orders
+    # in the specified region
     __REGION_TYPES  = 'https://esi.evetech.net/latest/markets/{}/types/'
 
-    __TIME_FORMAT   = '%Y-%m-%dT%H:%M:%SZ'
-
-    __ORDER_FIELDS = [
-        ('system_id'     , int),
-        ('location_id'   , int),
-        ('type_id'       , int),
-        ('order_id'      , int),
-
-        ('is_buy_order'  , int),
-
-        ('min_volume'    , int),
-        ('volume_total'  , int),
-        ('volume_remain' , int),
-
-        ('price'         , float),
-        ('range'         , str),
-    ]
 
     class Page():
         """
@@ -67,6 +56,7 @@ class API():
         def __init__(self, number):
             self.etag = ""
             self.number = number
+            self.cache = None
 
     def __init__(self, config, region_id):
         """
@@ -118,9 +108,10 @@ class API():
         num_errors = 3
 
         data_pages = []
+        cache_pages = []
         with stats.Stats.Timer() as timer:
             while True:
-                max_pages, data = func(
+                max_pages, data, cache = func(
                     self, worker, current_page, *args, **kwargs)
 
                 if max_pages < 1:
@@ -133,13 +124,15 @@ class API():
 
                 if data:
                     data_pages.append(data)
+                if cache:
+                    cache_pages.append(cache)
 
                 if current_page >= max_pages:
                     break
                 current_page += 1
 
         worker.stats().update(stats.Stats.REQUEST, runtime=timer.elapsed())
-        return data_pages
+        return (data_pages, cache_pages)
 
     def __fetch_unpaged(self, worker, etag, req_url, **kwargs):
         num_errors = 3
@@ -168,7 +161,8 @@ class API():
                 self.__type_pages[number] = type_page
 
         req_url = self.__REGION_TYPES.format(self.__region_id)
-        return self.__fetch_api_page(worker, type_page, req_url)
+        max_pages, orders = self.__fetch_api_page(worker, type_page, req_url)
+        return (max_pages, orders, None)
 
     def __fetch_type_order_page(self, worker, number, type_id):
         with self.__order_page_lock:
@@ -187,22 +181,13 @@ class API():
         max_pages, orders = self.__fetch_api_page(
             worker, order_page, req_url, type_id=type_id)
 
-        if not orders:
-            return (max_pages, orders)
-        return (max_pages, [self.__process_order(order) for order in orders])
+        if orders:
+            order_page.cache = []
+            for order in orders:
+                order_page.cache.append(int(order['order_id']))
+            return (max_pages, orders, None)
 
-    def __process_order(self, order_fields):
-        processed = {}
-
-        for order_key, order_type in self.__ORDER_FIELDS:
-            processed[order_key] = order_type(order_fields[order_key])
-
-        issued_dt = datetime.datetime.strptime(
-            order_fields['issued'], self.__TIME_FORMAT)
-        issued_dt += datetime.timedelta(int(order_fields['duration']))
-        processed['expiry'] = int(issued_dt.timestamp())
-
-        return processed
+        return (max_pages, orders, order_page.cache)
 
     def __fetch_api_page(self, worker, page, req_url, **kwargs):
         req_params = {'page': page.number}

@@ -29,7 +29,6 @@ import time
 import schedule
 
 from . import api
-from . import stats
 from . import utils
 from . import worker
 
@@ -37,6 +36,10 @@ class Watcher():
     """
     Continually updates ESI market data
     """
+
+    # UTC time to do daily updates to static data, like market order groups
+    __STATIC_UPDATE_TIME = "11:30"
+
     class _UpdateGroupInfoTask():
         def __init__(self, global_api, group_ids):
             self.__global_api = global_api
@@ -67,11 +70,14 @@ class Watcher():
             self.__type_id = type_id
 
         def __call__(self, pool, worker):
-            order_pages = self.__region_api.fetch_type_orders(
+            order_pages, order_caches = self.__region_api.fetch_type_orders(
                 worker, self.__type_id)
             for order_page in order_pages:
                 worker.database().add_orders(
                     worker, self.__region_api.region_id(), order_page)
+            for order_cache in order_caches:
+                worker.database().refresh_orders(
+                    worker, order_cache)
 
     def __init__(self, config):
         self.__config = config
@@ -89,15 +95,15 @@ class Watcher():
         Enters a blocking loop that fetches data, updates the database and
         sleeps for the remaning time as defined in the config
         """
-        schedule.every().day.at("11:30").do(
+        schedule.every().day.at(self.__STATIC_UPDATE_TIME).do(
             self.__update_groups).run()
-        return
         schedule.every(self.__fetch_delay).seconds.do(
             self.__update_orders).run()
+        self.__worker_pool.wait()
 
         while True:
-            schedule.run_pending()
             self.__worker_pool.wait()
+            schedule.run_pending()
             time.sleep(self.__wait_delay)
 
     def __update_groups(self):

@@ -1,7 +1,3 @@
-import redis
-import requests
-import time
-
 import config
 from marketwatch import redis, watcher
 

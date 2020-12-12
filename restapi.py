@@ -15,7 +15,7 @@ def group(group_id: int):
     conn = database.Database.instance(config.CONFIG)
     return conn.get_group_info(group_id)
 
-@app.get("/market/allgroups/")
+@app.get("/market/groups/all")
 def allGroup():
     conn = database.Database.instance(config.CONFIG)
     group_ids = conn.get_groups()

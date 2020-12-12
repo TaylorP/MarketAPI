@@ -24,6 +24,7 @@
 Redis database interface
 """
 
+import datetime
 import redis
 
 from . import database
@@ -33,12 +34,33 @@ class RedisDatabase(database.Database):
     """
     Redis database implementation that stores market data to a Redis DB.
     """
+
+    # The key for the Redis SET that contains all of the market group IDs
     __MARKET_GROUP_SET      = 'mg'
+
+    # The key format for a Redis HASH that contains the info data for the
+    # matching market group ID
     __MARKET_GROUP_INFO_KEY = 'mgi:{}'
+
+    # The key for the market group type LIST that contains the list of item
+    # type IDs for the matchign market group ID
     __MARKET_GROUP_TYPE_KEY = 'mgt:{}'
 
+    # The key expiry in seconds for market orders
+    __MARKET_ORDER_TTL      = 1200
+
+
+    # The key format for the Redis SET containing market order IDs for the
+    # matching region and item type ID
     __REGION_TYPE_SET       = 'rt:{}:{}'
 
+    # The time format used in market orders to specify the date/time that the
+    # order was listed
+    __TIME_FORMAT           = '%Y-%m-%dT%H:%M:%SZ'
+
+
+    # Field names -> types from a market group info API request that should
+    # be stored
     __MARKET_GROUP_FIELDS = [
         ('description'      , str),
         ('name'             , str),
@@ -46,13 +68,150 @@ class RedisDatabase(database.Database):
         ('parent_group_id'  , int),
     ]
 
+    # Field names -> types for a market order API request that should be
+    # stored
+    __ORDER_FIELDS = [
+        ('system_id'     , int),
+        ('location_id'   , int),
+        ('type_id'       , int),
+        ('order_id'      , int),
+
+        ('is_buy_order'  , int),
+
+        ('min_volume'    , int),
+        ('volume_total'  , int),
+        ('volume_remain' , int),
+
+        ('price'         , float),
+        ('range'         , str),
+    ]
+
     def __init__(self, config):
         database.Database.__init__(self)
 
-        self.__connection = redis.Redis(
+        self.__connection = redis.StrictRedis(
             host = config['host'],
             port = config['port'],
-            db = config['database'])
+            db = config['database'],
+            decode_responses=True)
+
+    def add_market_groups(self, worker, group_ids):
+        """
+        Adds the specified market group ids to the set stored in the database
+        """
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                for group_id in group_ids:
+                    conn.sadd(self.__MARKET_GROUP_SET, group_id)
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(group_ids),
+            changed=len(group_ids),
+            runtime=timer.elapsed())
+
+    def add_market_group_info(self, worker, group_infos):
+        """
+        Adds the specified market group infos to the database, and stores the
+        types for each group into a list
+        """
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                for group_info in group_infos:
+                    group_id = group_info['market_group_id']
+                    conn.hset(
+                        self.__group_info_name(group_id),
+                        mapping=self.__extract_fields(
+                            self.__MARKET_GROUP_FIELDS,
+                            group_info))
+
+                    type_list = group_info['types']
+                    if type_list:
+                        group_types = self.__group_type_name(group_id)
+                        conn.delete(group_types)
+                        conn.lpush(group_types, *type_list)
+
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(group_infos),
+            changed=len(group_infos),
+            runtime=timer.elapsed())
+
+    def add_orders(self, worker, region_id, orders):
+        """
+        Adds the orders to the database and the matching region:type set for
+        the order
+        """
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                for order in orders:
+                    order_id = order['order_id']
+
+                    conn.set(order_id, self.__encode_order(order))
+                    conn.expire(order_id, self.__MARKET_ORDER_TTL)
+                    conn.sadd(
+                        self.__type_set_name(region_id, order['type_id']),
+                        order_id)
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(orders)*3,
+            changed=len(orders)*3,
+            runtime=timer.elapsed())
+
+    def refresh_orders(self, worker, order_ids):
+        """
+        Refreshes the orders with the specified IDs. This only affects the
+        TTL value for existing order keys.
+        """
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                for order_id in order_ids:
+                    conn.expire(order_id, self.__MARKET_ORDER_TTL)
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(order_ids),
+            changed=len(order_ids),
+            runtime=timer.elapsed())
+
+    def get_orders(self, region_id, type_id):
+        """
+        Returns the market orders for the specified region ID and type ID.
+        """
+        set_name = self.__type_set_name(region_id, type_id)
+        order_ids = self.__connection.smembers(set_name)
+
+        orders = []
+        for order_id in order_ids:
+            encoded_order = self.__connection.get(order_id)
+            if not encoded_order:
+                self.__connection.srem(set_name, order_id)
+            else:
+                orders.append(self.__decode_order(encoded_order))
+
+        return orders
+
+    def get_groups(self):
+        """
+        Returns all market group IDs
+        """
+        group_ids = self.__connection.smembers(self.__MARKET_GROUP_SET)
+        return [int(group_id) for group_id in group_ids]
+
+    def get_group_info(self, group_id):
+        """
+        Returns market group info for the specified ID
+        """
+        group_info = self.__connection.hgetall(self.__group_info_name(group_id))
+        group_info['types'] = self.__connection.lrange(
+            self.__group_type_name(group_id), 0, -1)
+        return group_info
 
     @classmethod
     def __group_info_name(cls, group_id):
@@ -67,7 +226,7 @@ class RedisDatabase(database.Database):
         return cls.__REGION_TYPE_SET.format(region_id, type_id)
 
     @classmethod
-    def __format_fields(cls, field_spec, field_dict):
+    def __extract_fields(cls, field_spec, field_dict):
         fields = {}
         for field_key, field_type in field_spec:
             if not field_key in field_dict:
@@ -76,81 +235,37 @@ class RedisDatabase(database.Database):
                 fields[field_key] = field_type(field_dict[field_key])
         return fields
 
-    def add_market_groups(self, worker, group_ids):
-        with stats.Stats.Timer() as timer:
-            with self.__connection.pipeline() as conn:
-                for group_id in group_ids:
-                    conn.sadd(self.__MARKET_GROUP_SET, group_id)
-                conn.execute()
+    @classmethod
+    def __encode_fields(cls, field_dict):
+        return ':'.join([str(field) for _, field in field_dict.items()])
 
-        worker.stats().update(
-            stats.Stats.UPDATE,
-            total=len(group_ids),
-            changed=len(group_ids),
-            runtime=timer.elapsed())
+    @classmethod
+    def __decode_fields(cls, field_spec, field_string, **kwargs):
+        field_components = field_string.split(':')
+        decoded_fields = {}
 
-    def add_market_group_info(self, worker, group_infos):
-        with stats.Stats.Timer() as timer:
-            with self.__connection.pipeline() as conn:
-                for group_info in group_infos:
-                    group_id = group_info['market_group_id']
-                    conn.hset(
-                        self.__group_info_name(group_id),
-                        mapping=self.__format_fields(
-                            self.__MARKET_GROUP_FIELDS,
-                            group_info))
+        index = 0
+        for field_name, field_type in field_spec:
+            decoded_fields[field_name] = field_type(field_components[index])
+            index += 1
 
-                    if len(group_info['types']):
-                        group_types = self.__group_type_name(group_id)
-                        conn.delete(group_types)
-                        conn.lpush(group_types, *group_info['types'])
+        for field_name, field_type in kwargs.items():
+            decoded_fields[field_name] = field_type(field_components[index])
+            index += 1
 
-                conn.execute()
+        return decoded_fields
 
-        worker.stats().update(
-            stats.Stats.UPDATE,
-            total=len(group_infos),
-            changed=len(group_info),
-            runtime=timer.elapsed())
+    @classmethod
+    def __encode_order(cls, order_dict):
+        order_fields = cls.__extract_fields(cls.__ORDER_FIELDS, order_dict)
 
-    def add_orders(self, worker, region_id, orders):
-        with stats.Stats.Timer() as timer:
-            with self.__connection.pipeline() as conn:
-                for order in orders:
-                    order_id = order['order_id']
+        issued = datetime.datetime.strptime(
+            order_dict['issued'], cls.__TIME_FORMAT)
+        issued += datetime.timedelta(int(order_dict['duration']))
+        order_fields['expiry'] = int(issued.timestamp())
 
-                    conn.hset(order_id, mapping=order)
-                    conn.expire(order_id, 1200)
-                    conn.sadd(
-                        self.__type_set_name(region_id, order['type_id']),
-                        order_id)
-                conn.execute()
+        return cls.__encode_fields(order_fields)
 
-        worker.stats().update(
-            stats.Stats.UPDATE,
-            total=len(orders)*3,
-            changed=len(orders)*3,
-            runtime=timer.elapsed())
-
-    def get_orders(self, region_id, type_id):
-        set_name = self.__type_set_name(region_id, type_id)
-        order_ids = self.__connection.smembers(set_name)
-
-        orders = []
-        for order_id in order_ids:
-            order_fields = self.__connection.hgetall(order_id)
-            if not order_fields:
-                self.__connection.srem(set_name, order_id)
-            else:
-                orders.append(order_fields)
-        return orders
-
-    def get_groups(self):
-        group_ids = self.__connection.smembers(self.__MARKET_GROUP_SET)
-        return [int(group_id) for group_id in group_ids]
-
-    def get_group_info(self, group_id):
-        group_info = self.__connection.hgetall(self.__group_info_name(group_id))
-        group_info['types'] = self.__connection.lrange(
-            self.__group_type_name(group_id), 0, -1)
-        return group_info
+    @classmethod
+    def __decode_order(cls, order_string):
+        return cls.__decode_fields(cls.__ORDER_FIELDS, order_string, expiry=int)
