@@ -29,6 +29,7 @@ import time
 import schedule
 
 from . import api
+from . import stats
 from . import utils
 from . import worker
 
@@ -70,14 +71,15 @@ class Watcher():
             self.__type_id = type_id
 
         def __call__(self, pool, worker):
-            order_pages, order_caches = self.__region_api.fetch_type_orders(
-                worker, self.__type_id)
-            for order_page in order_pages:
-                worker.database().add_orders(
-                    worker, self.__region_api.region_id(), order_page)
-            for order_cache in order_caches:
-                worker.database().refresh_orders(
-                    worker, order_cache)
+            def __update(order_page, order_cache):
+                if order_page:
+                    worker.database().add_orders(
+                        worker, self.__region_api.region_id(), order_page)
+                if order_cache:
+                    worker.database().refresh_orders(worker, order_cache)
+
+            self.__region_api.fetch_type_orders(
+                worker, self.__type_id, __update)
 
     def __init__(self, config):
         self.__config = config
@@ -99,11 +101,16 @@ class Watcher():
             self.__update_groups).run()
         schedule.every(self.__fetch_delay).seconds.do(
             self.__update_orders).run()
-        self.__worker_pool.wait()
 
         while True:
-            self.__worker_pool.wait()
-            schedule.run_pending()
+            with stats.Stats.Timer() as timer:
+                schedule.run_pending()
+                self.__worker_pool.wait()
+
+            if timer.elapsed() > 1.0:
+                self.__worker_pool.log().info(
+                    "Processed updated in %f seconds", timer.elapsed())
+
             time.sleep(self.__wait_delay)
 
     def __update_groups(self):

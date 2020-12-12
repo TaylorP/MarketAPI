@@ -87,6 +87,13 @@ class RedisDatabase(database.Database):
     ]
 
     def __init__(self, config):
+        """
+        Constructs a new database connection.
+
+        Args:
+            config: The configuration options for the database.
+        """
+
         database.Database.__init__(self)
 
         self.__connection = redis.StrictRedis(
@@ -97,10 +104,16 @@ class RedisDatabase(database.Database):
 
     def add_market_groups(self, worker, group_ids):
         """
-        Adds the specified market group ids to the set stored in the database
+        Adds the specified market group IDs to the set stored in the database.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            group_ids: A list of market group IDs to add to the database.
         """
+
         with stats.Stats.Timer() as timer:
             with self.__connection.pipeline() as conn:
+                conn.delete(self.__MARKET_GROUP_SET)
                 for group_id in group_ids:
                     conn.sadd(self.__MARKET_GROUP_SET, group_id)
                 conn.execute()
@@ -114,8 +127,13 @@ class RedisDatabase(database.Database):
     def add_market_group_info(self, worker, group_infos):
         """
         Adds the specified market group infos to the database, and stores the
-        types for each group into a list
+        types for each group into a list.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            group_infos: The list of market group info fields to add.
         """
+
         with stats.Stats.Timer() as timer:
             with self.__connection.pipeline() as conn:
                 for group_info in group_infos:
@@ -142,9 +160,15 @@ class RedisDatabase(database.Database):
 
     def add_orders(self, worker, region_id, orders):
         """
-        Adds the orders to the database and the matching region:type set for
-        the order
+        Adds the orders to the database and the matching region::type set for
+        the order.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_id: The region ID that the order(s) are listed in.
+            orders: The list of market order fields to add.
         """
+
         with stats.Stats.Timer() as timer:
             with self.__connection.pipeline() as conn:
                 for order in orders:
@@ -166,8 +190,14 @@ class RedisDatabase(database.Database):
     def refresh_orders(self, worker, order_ids):
         """
         Refreshes the orders with the specified IDs. This only affects the
-        TTL value for existing order keys.
+        TTL value for existing order keys -- this method does not add any
+        new keys to the database.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            order_ids: The list of market order IDs that need a TTL refresh
         """
+
         with stats.Stats.Timer() as timer:
             with self.__connection.pipeline() as conn:
                 for order_id in order_ids:
@@ -182,8 +212,18 @@ class RedisDatabase(database.Database):
 
     def get_orders(self, region_id, type_id):
         """
-        Returns the market orders for the specified region ID and type ID.
+        Queries market orders for the specified region ID and type ID.
+
+        Args:
+            region_id: The region ID for filtering market orders
+            type_id: The item type ID for the orders to query
+
+        Returns:
+            The list of market orders for the item type in the specified
+            region.
+
         """
+
         set_name = self.__type_set_name(region_id, type_id)
         order_ids = self.__connection.smembers(set_name)
 
@@ -199,15 +239,26 @@ class RedisDatabase(database.Database):
 
     def get_groups(self):
         """
-        Returns all market group IDs
+        Queries all market group IDs.
+
+        Returns:
+            The list of market group IDs in the database.
         """
+
         group_ids = self.__connection.smembers(self.__MARKET_GROUP_SET)
         return [int(group_id) for group_id in group_ids]
 
     def get_group_info(self, group_id):
         """
-        Returns market group info for the specified ID
+        Queries market group info for the specified ID.
+
+        Args:
+            group_id: The market group ID to lookup in the database
+
+        Returns:
+            The market group info for the specified ID.
         """
+
         group_info = self.__connection.hgetall(self.__group_info_name(group_id))
         group_info['types'] = self.__connection.lrange(
             self.__group_type_name(group_id), 0, -1)

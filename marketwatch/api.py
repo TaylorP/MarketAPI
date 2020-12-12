@@ -91,19 +91,20 @@ class API():
         return self.__fetch_unpaged(
             worker, '', self.__MARKET_GROUPS.format(group_id))
 
-    def fetch_type_orders(self, worker, type_id=None):
+    def fetch_type_orders(self, worker, type_id=None, callback=None):
         """
         Fetches orders for the specified item type ID
         """
-        return self.__fetch_paged(worker, API.__fetch_type_order_page, type_id)
+        return self.__fetch_paged(
+            worker, callback, API.__fetch_type_order_page, type_id)
 
     def fetch_types(self, worker):
         """
         Fetches the list of type IDs for the region
         """
-        return self.__fetch_paged(worker, API.__fetch_type_page)
+        return self.__fetch_paged(worker, None, API.__fetch_type_page)
 
-    def __fetch_paged(self, worker, func, *args, **kwargs):
+    def __fetch_paged(self, worker, callback, func, *args, **kwargs):
         current_page = 1
         num_errors = 3
 
@@ -122,10 +123,13 @@ class API():
                     time.sleep(0.5)
                     continue
 
-                if data:
-                    data_pages.append(data)
-                if cache:
-                    cache_pages.append(cache)
+                if callback:
+                    callback(data, cache)
+                else:
+                    if data:
+                        data_pages.append(data)
+                    if cache:
+                        cache_pages.append(cache)
 
                 if current_page >= max_pages:
                     break
