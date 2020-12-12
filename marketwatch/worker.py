@@ -94,7 +94,7 @@ class WorkerPool():
             thread = threading.Thread(
                 target = WorkerPool.__process,
                 args = (self, worker),
-                daemon = True)
+                daemon = False)
             thread.start()
 
             self.__workers.append(worker)

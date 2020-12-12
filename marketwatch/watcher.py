@@ -47,6 +47,8 @@ class Watcher():
             self.__group_ids = group_ids
 
         def __call__(self, pool, worker):
+            worker.log().info("Updating market group info")
+
             group_infos = []
             for group_id in self.__group_ids:
                 group_infos.append(
@@ -58,6 +60,8 @@ class Watcher():
             self.__global_api = global_api
 
         def __call__(self, pool, worker):
+            worker.log().info("Fetching market groups")
+
             group_ids = self.__global_api.fetch_market_groups(worker)
             worker.database().add_market_groups(worker, group_ids)
 
@@ -73,10 +77,22 @@ class Watcher():
         def __call__(self, pool, worker):
             def __update(order_page, order_cache):
                 if order_page:
+                    worker.log().info("\tAdding new orders")
                     worker.database().add_orders(
                         worker, self.__region_api.region_id(), order_page)
                 if order_cache:
+                    worker.log().info("\tRefreshing cached orders")
                     worker.database().refresh_orders(worker, order_cache)
+
+            if self.__type_id:
+                worker.log().info(
+                    "Fetching market orders for region `%d`, type `%d`",
+                    self.__region_api.region_id(),
+                    self.__type_id)
+            else:
+                worker.log().info(
+                    "Fetching market orders for region `%d`",
+                    self.__region_api.region_id())
 
             self.__region_api.fetch_type_orders(
                 worker, self.__type_id, __update)
@@ -97,10 +113,16 @@ class Watcher():
         Enters a blocking loop that fetches data, updates the database and
         sleeps for the remaning time as defined in the config
         """
+
+        self.__worker_pool.log().info(
+            "Scheduling initial update jobs")
         schedule.every().day.at(self.__STATIC_UPDATE_TIME).do(
             self.__update_groups).run()
         schedule.every(self.__fetch_delay).seconds.do(
             self.__update_orders).run()
+
+        self.__worker_pool.log().info(
+            "Starting watch loop")
 
         while True:
             with stats.Stats.Timer() as timer:

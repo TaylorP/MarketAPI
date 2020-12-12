@@ -1,5 +1,6 @@
 fastapi
 gunicorn
+python-daemon
 redis
 requests
 schedule

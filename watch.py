@@ -1,5 +1,8 @@
-import config
+import daemon
+
+from config import CONFIG
 from marketwatch import redis, watcher
 
-w = watcher.Watcher(config.CONFIG)
-w.watch()
+with daemon.DaemonContext(working_directory='.') as context:
+    w = watcher.Watcher(CONFIG)
+    w.watch()
