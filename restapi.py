@@ -47,7 +47,8 @@ def allGroup():
 def orders(type_id: int):
     conn = database.Database.instance(config.CONFIG)
     orders = []
-    for region_id in config.CONFIG['regions']:
+    regions = conn.get_regions()
+    for region_id in regions:
         orders += conn.get_orders(region_id, type_id)
     return orders
 
