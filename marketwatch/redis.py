@@ -321,11 +321,12 @@ class RedisDatabase(database.Database):
         region_info = self.__extract_fields(
             self.__REGION_FIELDS,
             self.__connection.hgetall(self.__region_info_name(region_id)))
+        return region_info
+
+    def get_systems(self, region_id):
         system_ids = self.__connection.lrange(
             self.__region_system_name(region_id), 0, -1)
-        region_info['systems'] = [int(system_id) for system_id in system_ids]
-
-        return region_info
+        return [int(system_id) for system_id in system_ids]
 
     def get_groups(self):
         """
