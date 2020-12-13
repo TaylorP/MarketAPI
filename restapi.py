@@ -5,6 +5,25 @@ from marketwatch import database
 
 app = FastAPI()
 
+@app.get("/universe/regions")
+def regions():
+    conn = database.Database.instance(config.CONFIG)
+    return conn.get_regions()
+
+@app.get("/universe/region/{region_id}")
+def region(region_id: int):
+    conn = database.Database.instance(config.CONFIG)
+    return conn.get_region_info(region_id)
+
+@app.get("/universe/regions/all")
+def allRegions():
+    conn = database.Database.instance(config.CONFIG)
+    region_ids = conn.get_regions()
+    regions = []
+    for region_id in region_ids:
+        regions.append(conn.get_region_info(region_id))
+    return regions
+
 @app.get("/market/groups")
 def groups():
     conn = database.Database.instance(config.CONFIG)

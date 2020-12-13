@@ -35,8 +35,20 @@ class RedisDatabase(database.Database):
     Redis database implementation that stores market data to a Redis DB.
     """
 
-    # The key for the Redis SET that contains all of the market group IDs
-    __MARKET_GROUP_SET      = 'mg'
+    # The key for the Redis LIST that contains all of the region IDs
+    __REGION_LIST           = 'r'
+
+    # The key format for a Redis HASH that contains the info data for the
+    # matching region ID
+    __REGION_INFO_KEY       = 'ri:{}'
+
+    # The key format for a Redis LIST that contains the systems IDs in a
+    # matching region ID.
+    __REGION_SYSTEM_KEY     = 'rs:{}'
+
+
+    # The key for the Redis LIST that contains all of the market group IDs
+    __MARKET_GROUP_LIST     = 'mg'
 
     # The key format for a Redis HASH that contains the info data for the
     # matching market group ID
@@ -59,10 +71,16 @@ class RedisDatabase(database.Database):
     __TIME_FORMAT           = '%Y-%m-%dT%H:%M:%SZ'
 
 
+    # Field names -> types from a region info API request that should
+    # be stored
+    __REGION_FIELDS = [
+        ('name'             , str),
+        ('region_id'        , int),
+    ]
+
     # Field names -> types from a market group info API request that should
     # be stored
     __MARKET_GROUP_FIELDS = [
-        ('description'      , str),
         ('name'             , str),
         ('market_group_id'  , int),
         ('parent_group_id'  , int),
@@ -102,9 +120,78 @@ class RedisDatabase(database.Database):
             db = config['database'],
             decode_responses=True)
 
-    def add_market_groups(self, worker, group_ids):
+    def set_regions(self, worker, region_ids):
         """
-        Adds the specified market group IDs to the set stored in the database.
+        Stores the specified region IDs to a set in the database.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_ids: The list of region IDs to add to the database.
+        """
+
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                conn.delete(self.__REGION_LIST)
+                conn.rpush(self.__REGION_LIST, *region_ids)
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(region_ids),
+            changed=len(region_ids),
+            runtime=timer.elapsed())
+
+    def add_region_info(self, worker, region_infos):
+        """
+        Adds the specified region infos to the database.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_infos: The list of region info fields to add.
+        """
+
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                for region_info in region_infos:
+                    region_id = region_info['region_id']
+                    conn.hset(
+                        self.__region_info_name(region_id),
+                        mapping=self.__extract_fields(
+                            self.__REGION_FIELDS,
+                            region_info))
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(region_infos),
+            changed=len(region_infos),
+            runtime=timer.elapsed())
+
+    def set_region_systems(self, worker, region_id, system_ids):
+        """
+        Sets the system IDs in the the specified region.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_id: The ID of the region that contains the systems.
+            system_ids: The list of system IDs.
+        """
+
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                conn.rpush(
+                    self.__region_system_name(region_id), *system_ids)
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(system_ids),
+            changed=len(system_ids),
+            runtime=timer.elapsed())
+
+    def set_market_groups(self, worker, group_ids):
+        """
+        Stores the specified market group IDs to a set in the database.
 
         Args:
             worker: The marketwatch.worker.Worker containing local state.
@@ -113,9 +200,8 @@ class RedisDatabase(database.Database):
 
         with stats.Stats.Timer() as timer:
             with self.__connection.pipeline() as conn:
-                conn.delete(self.__MARKET_GROUP_SET)
-                for group_id in group_ids:
-                    conn.sadd(self.__MARKET_GROUP_SET, group_id)
+                conn.delete(self.__MARKET_GROUP_LIST)
+                conn.rpush(self.__MARKET_GROUP_LIST, *group_ids)
                 conn.execute()
 
         worker.stats().update(
@@ -210,6 +296,67 @@ class RedisDatabase(database.Database):
             changed=len(order_ids),
             runtime=timer.elapsed())
 
+    def get_regions(self):
+        """
+        Queries the list of region IDs.
+
+        Returns:
+            The list of valud region IDs.
+        """
+
+        region_ids = self.__connection.lrange(self.__REGION_LIST, 0, -1)
+        return [int(region_id) for region_id in region_ids]
+
+    def get_region_info(self, region_id):
+        """
+        Queries region info for the specified ID.
+
+        Args:
+            region_id: The region ID to lookup in the database
+
+        Returns:
+            The region info for the specified ID.
+        """
+
+        region_info = self.__extract_fields(
+            self.__REGION_FIELDS,
+            self.__connection.hgetall(self.__region_info_name(region_id)))
+        system_ids = self.__connection.lrange(
+            self.__region_system_name(region_id), 0, -1)
+        region_info['systems'] = [int(system_id) for system_id in system_ids]
+
+        return region_info
+
+    def get_groups(self):
+        """
+        Queries all market group IDs.
+
+        Returns:
+            The list of market group IDs in the database.
+        """
+
+        group_ids = self.__connection.lrange(self.__MARKET_GROUP_LIST, 0, -1)
+        return [int(group_id) for group_id in group_ids]
+
+    def get_group_info(self, group_id):
+        """
+        Queries market group info for the specified ID.
+
+        Args:
+            group_id: The market group ID to lookup in the database
+
+        Returns:
+            The market group info for the specified ID.
+        """
+
+        group_info = self.__extract_fields(
+            self.__MARKET_GROUP_FIELDS,
+            self.__connection.hgetall(self.__group_info_name(group_id)))
+        type_ids = self.__connection.lrange(
+            self.__group_type_name(group_id), 0, -1)
+        group_info['types'] = [int(type_id) for type_id in type_ids]
+        return group_info
+
     def get_orders(self, region_id, type_id):
         """
         Queries market orders for the specified region ID and type ID.
@@ -240,32 +387,13 @@ class RedisDatabase(database.Database):
 
         return orders
 
-    def get_groups(self):
-        """
-        Queries all market group IDs.
+    @classmethod
+    def __region_info_name(cls, region_id):
+        return cls.__REGION_INFO_KEY.format(region_id)
 
-        Returns:
-            The list of market group IDs in the database.
-        """
-
-        group_ids = self.__connection.smembers(self.__MARKET_GROUP_SET)
-        return [int(group_id) for group_id in group_ids]
-
-    def get_group_info(self, group_id):
-        """
-        Queries market group info for the specified ID.
-
-        Args:
-            group_id: The market group ID to lookup in the database
-
-        Returns:
-            The market group info for the specified ID.
-        """
-
-        group_info = self.__connection.hgetall(self.__group_info_name(group_id))
-        group_info['types'] = self.__connection.lrange(
-            self.__group_type_name(group_id), 0, -1)
-        return group_info
+    @classmethod
+    def __region_system_name(cls, region_id):
+        return cls.__REGION_SYSTEM_KEY.format(region_id)
 
     @classmethod
     def __group_info_name(cls, group_id):

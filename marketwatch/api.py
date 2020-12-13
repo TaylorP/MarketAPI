@@ -35,6 +35,13 @@ class API():
     methods for making ESI API calls. Methods are thread safe.
     """
 
+    # The API endpoint for requesting region information for a given ID
+    __REGION_INFO   = 'https://esi.evetech.net/latest/universe/regions/{}'
+
+    # The API endpoint for request constellation information for a given ID
+    __CONST_INFO    = 'https://esi.evetech.net/latest/universe/constellations/{}'
+
+
     # The API endpoint for requesting market group IDs and market group
     # info
     __MARKET_GROUPS = 'https://esi.evetech.net/latest/markets/groups/{}'
@@ -84,9 +91,53 @@ class API():
 
         return self.__region_id
 
+    def fetch_regions(self, worker):
+        """
+        Fetches the list of regions IDs.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+
+        Returns:
+            The list of valid region IDs.
+        """
+
+        return self.__fetch_unpaged(
+            worker, '', self.__REGION_INFO.format(''))
+
+    def fetch_region_info(self, worker, region_id):
+        """
+        Fetches the info for a particular region.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_id: The region ID to fetch.
+
+        Returns:
+            Region info fields for the specified ID.
+        """
+
+        return self.__fetch_unpaged(
+            worker, '', self.__REGION_INFO.format(region_id))
+
+    def fetch_constellation_info(self, worker, constellation_id):
+        """
+        Fetches the info for a particular constellaton
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_id: The constellation ID to fetch.
+
+        Returns:
+            Constellation info fields for the specified ID.
+        """
+
+        return self.__fetch_unpaged(
+            worker, '', self.__CONST_INFO.format(constellation_id))
+
     def fetch_market_groups(self, worker):
         """
-        Fetches the list of market group ids
+        Fetches the list of market group IDs.
 
         Args:
             worker: The marketwatch.worker.Worker containing local state.
@@ -100,11 +151,11 @@ class API():
 
     def fetch_market_group_info(self, worker, group_id):
         """
-        Fetches the info for a particular market order
+        Fetches the info for a particular market order.
 
         Args:
             worker: The marketwatch.worker.Worker containing local state.
-            group_id: The market group ID to fetch
+            group_id: The market group ID to fetch.
 
         Returns:
             Market group info fields for the specified ID.

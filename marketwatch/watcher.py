@@ -29,8 +29,9 @@ import time
 import schedule
 
 from . import api
+from . import database
 from . import stats
-from . import utils
+from . import tasks
 from . import worker
 
 class Watcher():
@@ -41,72 +42,18 @@ class Watcher():
     # UTC time to do daily updates to static data, like market order groups
     __STATIC_UPDATE_TIME = "11:30"
 
-    class _UpdateGroupInfoTask():
-        def __init__(self, global_api, group_ids):
-            self.__global_api = global_api
-            self.__group_ids = group_ids
-
-        def __call__(self, pool, worker):
-            worker.log().info("Updating market group info")
-
-            group_infos = []
-            for group_id in self.__group_ids:
-                group_infos.append(
-                    self.__global_api.fetch_market_group_info(worker, group_id))
-            worker.database().add_market_group_info(worker, group_infos)
-
-    class _UpdateGroupsTask():
-        def __init__(self, global_api):
-            self.__global_api = global_api
-
-        def __call__(self, pool, worker):
-            worker.log().info("Fetching market groups")
-
-            group_ids = self.__global_api.fetch_market_groups(worker)
-            worker.database().add_market_groups(worker, group_ids)
-
-            for sub_list in utils.list_chunks(group_ids, 8):
-                pool.enqueue(
-                    Watcher._UpdateGroupInfoTask(self.__global_api, sub_list))
-
-    class _UpdateOrdersTask():
-        def __init__(self, region_api, type_id=None):
-            self.__region_api = region_api
-            self.__type_id = type_id
-
-        def __call__(self, pool, worker):
-            def __update(order_page, order_cache):
-                if order_page:
-                    worker.log().info("\tAdding new orders")
-                    worker.database().add_orders(
-                        worker, self.__region_api.region_id(), order_page)
-                if order_cache:
-                    worker.log().info("\tRefreshing cached orders")
-                    worker.database().refresh_orders(worker, order_cache)
-
-            if self.__type_id:
-                worker.log().info(
-                    "Fetching market orders for region `%d`, type `%d`",
-                    self.__region_api.region_id(),
-                    self.__type_id)
-            else:
-                worker.log().info(
-                    "Fetching market orders for region `%d`",
-                    self.__region_api.region_id())
-
-            self.__region_api.fetch_type_orders(
-                worker, self.__type_id, __update)
-
     def __init__(self, config):
+        """
+        Constructs a new market watcher instance from a config
+        """
+
         self.__config = config
+        self.__database = database.Database.instance(config)
         self.__fetch_delay = config['fetch_delay']
         self.__global_api = api.API(config, 0)
+        self.__region_apis = {}
         self.__wait_delay = config['wait_delay']
         self.__worker_pool = worker.WorkerPool(config)
-
-        self.__region_apis = {}
-        for region_id in config['regions']:
-            self.__region_apis[region_id] = api.API(config, region_id)
 
     def watch(self):
         """
@@ -114,15 +61,16 @@ class Watcher():
         sleeps for the remaning time as defined in the config
         """
 
-        self.__worker_pool.log().info(
-            "Scheduling initial update jobs")
+        self.__worker_pool.log().info("Scheduling initial update jobs")
+
+        schedule.every().day.at(self.__STATIC_UPDATE_TIME).do(
+            self.__update_universe).run()
         schedule.every().day.at(self.__STATIC_UPDATE_TIME).do(
             self.__update_groups).run()
         schedule.every(self.__fetch_delay).seconds.do(
             self.__update_orders).run()
 
-        self.__worker_pool.log().info(
-            "Starting watch loop")
+        self.__worker_pool.log().info("Starting watcher loop")
 
         while True:
             with stats.Stats.Timer() as timer:
@@ -135,11 +83,22 @@ class Watcher():
 
             time.sleep(self.__wait_delay)
 
+    def __update_universe(self):
+        self.__worker_pool.log().info("Updating universe")
+        self.__worker_pool.enqueue(tasks.UpdateRegionsTask(self.__global_api))
+        self.__worker_pool.wait()
+
+        self.__region_apis = {}
+        for region_id in self.__database.get_regions():
+            self.__worker_pool.log().info(
+                "\tAdding regional API for %i", region_id)
+            self.__region_apis[region_id] = api.API(self.__config, region_id)
+
     def __update_groups(self):
         self.__worker_pool.log().info("Updating market groups")
-        self.__worker_pool.enqueue(Watcher._UpdateGroupsTask(self.__global_api))
+        self.__worker_pool.enqueue(tasks.UpdateGroupsTask(self.__global_api))
 
     def __update_orders(self):
         self.__worker_pool.log().info("Updating orders for all regions")
         for _, region_api in self.__region_apis.items():
-            self.__worker_pool.enqueue(Watcher._UpdateOrdersTask(region_api))
+            self.__worker_pool.enqueue(tasks.UpdateOrdersTask(region_api))
