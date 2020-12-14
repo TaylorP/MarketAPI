@@ -38,8 +38,11 @@ class API():
     # The API endpoint for requesting region information for a given ID
     __REGION_INFO   = 'https://esi.evetech.net/latest/universe/regions/{}'
 
-    # The API endpoint for request constellation information for a given ID
+    # The API endpoint for requesting constellation information for a given ID
     __CONST_INFO    = 'https://esi.evetech.net/latest/universe/constellations/{}'
+
+    # The API endpoint for requesting system information for a given ID
+    __SYSTEM_INFO   = 'https://esi.evetech.net/latest/universe/systems/{}'
 
 
     # The API endpoint for requesting market group IDs and market group
@@ -126,7 +129,7 @@ class API():
 
         Args:
             worker: The marketwatch.worker.Worker containing local state.
-            region_id: The constellation ID to fetch.
+            constellation_id: The constellation ID to fetch.
 
         Returns:
             Constellation info fields for the specified ID.
@@ -134,6 +137,21 @@ class API():
 
         return self.__fetch_unpaged(
             worker, '', self.__CONST_INFO.format(constellation_id))
+
+    def fetch_system_info(self, worker, system_id):
+        """
+        Fetches the info for a particular system
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            system_id: The system ID to fetch.
+
+        Returns:
+            System info fields for the specified ID.
+        """
+
+        return self.__fetch_unpaged(
+            worker, '', self.__SYSTEM_INFO.format(system_id))
 
     def fetch_market_groups(self, worker):
         """

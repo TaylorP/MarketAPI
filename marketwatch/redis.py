@@ -43,8 +43,12 @@ class RedisDatabase(database.Database):
     __REGION_INFO_KEY       = 'ri:{}'
 
     # The key format for a Redis LIST that contains the systems IDs in a
-    # matching region ID.
+    # matching region ID
     __REGION_SYSTEM_KEY     = 'rs:{}'
+
+    # The key format for a Redis HASH that contains the info data for the
+    # maching system ID
+    __SYSTEM_INFO_KEY       = 'si:{}'
 
 
     # The key for the Redis LIST that contains all of the market group IDs
@@ -76,6 +80,14 @@ class RedisDatabase(database.Database):
     __REGION_FIELDS = [
         ('name'             , str),
         ('region_id'        , int),
+    ]
+
+    # Field names -> typs from a system info API request at should be
+    # sotred
+    __SYSTEM_FIELDS = [
+        ('name'             , str),
+        ('security_status'  , float),
+        ('system_id'        , int),
     ]
 
     # Field names -> types from a market group info API request that should
@@ -150,22 +162,12 @@ class RedisDatabase(database.Database):
             region_infos: The list of region info fields to add.
         """
 
-        with stats.Stats.Timer() as timer:
-            with self.__connection.pipeline() as conn:
-                for region_info in region_infos:
-                    region_id = region_info['region_id']
-                    conn.hset(
-                        self.__region_info_name(region_id),
-                        mapping=self.__extract_fields(
-                            self.__REGION_FIELDS,
-                            region_info))
-                conn.execute()
-
-        worker.stats().update(
-            stats.Stats.UPDATE,
-            total=len(region_infos),
-            changed=len(region_infos),
-            runtime=timer.elapsed())
+        self.__add_infos(
+            worker,
+            region_infos,
+            self.__REGION_FIELDS,
+            'region_id',
+            self.__region_info_name)
 
     def set_region_systems(self, worker, region_id, system_ids):
         """
@@ -179,8 +181,9 @@ class RedisDatabase(database.Database):
 
         with stats.Stats.Timer() as timer:
             with self.__connection.pipeline() as conn:
-                conn.rpush(
-                    self.__region_system_name(region_id), *system_ids)
+                system_key = self.__region_system_name(region_id)
+                conn.delete(system_key)
+                conn.rpush(system_key, *system_ids)
                 conn.execute()
 
         worker.stats().update(
@@ -188,6 +191,22 @@ class RedisDatabase(database.Database):
             total=len(system_ids),
             changed=len(system_ids),
             runtime=timer.elapsed())
+
+    def add_system_info(self, worker, system_infos):
+        """
+        Adds the specified region infos to the database.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_infos: The list of region info fields to add.
+        """
+
+        self.__add_infos(
+            worker,
+            system_infos,
+            self.__SYSTEM_FIELDS,
+            'system_id',
+            self.__system_info_name)
 
     def set_market_groups(self, worker, group_ids):
         """
@@ -312,7 +331,7 @@ class RedisDatabase(database.Database):
         Queries region info for the specified ID.
 
         Args:
-            region_id: The region ID to lookup in the database
+            region_id: The region ID to lookup in the database.
 
         Returns:
             The region info for the specified ID.
@@ -324,9 +343,35 @@ class RedisDatabase(database.Database):
         return region_info
 
     def get_systems(self, region_id):
+        """
+        Queries the list of system IDs for the given region ID.
+
+        Args:
+            region_id:  The region ID to lookup in the database.
+
+        Returns:
+            The list of system IDs in the specified region ID.
+        """
+
         system_ids = self.__connection.lrange(
             self.__region_system_name(region_id), 0, -1)
         return [int(system_id) for system_id in system_ids]
+
+    def get_system_info(self, system_id):
+        """
+        Queries system info for the specified ID.
+
+        Args:
+            system_id: The system ID to lookup in the database.
+
+        Returns:
+            The system info for the specified ID.
+        """
+
+        system_info = self.__extract_fields(
+            self.__SYSTEM_FIELDS,
+            self.__connection.hgetall(self.__system_info_name(system_id)))
+        return system_info
 
     def get_groups(self):
         """
@@ -397,6 +442,10 @@ class RedisDatabase(database.Database):
         return cls.__REGION_SYSTEM_KEY.format(region_id)
 
     @classmethod
+    def __system_info_name(cls, system_id):
+        return cls.__SYSTEM_INFO_KEY.format(system_id)
+
+    @classmethod
     def __group_info_name(cls, group_id):
         return cls.__MARKET_GROUP_INFO_KEY.format(group_id)
 
@@ -452,3 +501,19 @@ class RedisDatabase(database.Database):
     @classmethod
     def __decode_order(cls, order_string):
         return cls.__decode_fields(cls.__ORDER_FIELDS, order_string, expiry=int)
+
+    def __add_infos(self, worker, infos, field_spec, id_key, hash_func):
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                for info in infos:
+                    info_id = info[id_key]
+                    conn.hset(
+                        hash_func(info_id),
+                        mapping=self.__extract_fields(field_spec, info))
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(infos),
+            changed=len(infos),
+            runtime=timer.elapsed())

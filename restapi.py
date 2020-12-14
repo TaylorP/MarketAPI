@@ -6,13 +6,22 @@ from marketwatch import database
 app = FastAPI()
 
 @app.get("/universe/regions")
-def allRegions():
+def regions():
     conn = database.Database.instance(config.CONFIG)
     region_ids = conn.get_regions()
     regions = []
     for region_id in region_ids:
         regions.append(conn.get_region_info(region_id))
     return regions
+
+@app.get("/universe/systems/{region_id}")
+def systems(region_id: int):
+    conn = database.Database.instance(config.CONFIG)
+    system_ids = conn.get_systems(region_id)
+    systems = []
+    for system_id in system_ids:
+        systems.append(conn.get_system_info(system_id))
+    return systems
 
 @app.get("/market/groups")
 def groups():

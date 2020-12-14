@@ -24,8 +24,35 @@
 Task functors for updating data using the ESI API and storing it to a
 database
 """
-
 from . import utils
+
+class UpdateSystemInfoTask():
+    """
+    Updates info for a specific block of system IDs.
+    """
+
+    def __init__(self, global_api, system_ids):
+        """
+        Constructs a task that updates systme info for a list of system IDs.
+
+        Args:
+            global_api: The global marketwatch.api.API instance.
+            system_ids: The list of system IDs.
+        """
+
+        self.__global_api = global_api
+        self.__system_ids = system_ids
+
+    def __call__(self, pool, worker):
+        worker.log().info("Fetching system info")
+
+        system_infos = []
+        for system_id in self.__system_ids:
+            worker.log().info("\tFetching system %d", system_id)
+            system_infos.append(
+                self.__global_api.fetch_system_info(worker, system_id))
+
+        worker.database().add_system_info(worker, system_infos)
 
 class UpdateRegionSystemsTask():
     """
@@ -48,7 +75,7 @@ class UpdateRegionSystemsTask():
         self.__region_id = region_id
 
     def __call__(self, pool, worker):
-        worker.log().info("Fetching systems")
+        worker.log().info("Fetching systems for region %d", self.__region_id)
 
         system_ids = []
         for constellation_id in self.__constellation_ids:
@@ -56,6 +83,9 @@ class UpdateRegionSystemsTask():
                 worker, constellation_id)
             if 'systems' in constellation_info:
                 system_ids += constellation_info['systems']
+
+        pool.enqueue(UpdateSystemInfoTask(
+            self.__global_api, system_ids))
 
         worker.database().set_region_systems(
             worker, self.__region_id, system_ids)
@@ -82,6 +112,7 @@ class UpdateRegionInfoTask():
 
         region_infos = []
         for region_id in self.__region_ids:
+            worker.log().info("\tFetching region %d", region_id)
             region_info = self.__global_api.fetch_region_info(worker, region_id)
             if 'constellations' in region_info:
                 pool.enqueue(UpdateRegionSystemsTask(
