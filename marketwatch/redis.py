@@ -86,47 +86,44 @@ class RedisDatabase(database.Database):
     # Field names -> types from a region info API request that should
     # be stored
     __REGION_FIELDS = [
-        ('name'             , str),
-        ('region_id'        , int),
+        ('name'             , 'name'    , str),
+        ('region_id'        , 'id'      , int),
     ]
 
     # Field names -> types from a system info API request that should
     # be stored
     __SYSTEM_FIELDS = [
-        ('name'             , str),
-        ('security_status'  , float),
-        ('system_id'        , int),
+        ('name'             , 'name'    , str),
+        ('security_status'  , 'sec'     , float),
+        ('system_id'        , 'id'      , int),
     ]
 
     # Field names -> types from a structure or station API request that
     # should be stored
     __LOCATION_FIELDS = [
-        ('name'             , str),
-        ('station_id'       , int),
+        ('name'             , 'name'    , str),
+        ('station_id'       , 'id'      , int),
     ]
 
     # Field names -> types from a market group info API request that should
     # be stored
     __MARKET_GROUP_FIELDS = [
-        ('name'             , str),
-        ('market_group_id'  , int),
-        ('parent_group_id'  , int),
+        ('name'             , 'name'    , str),
+        ('market_group_id'  , 'id'      , int),
+        ('parent_group_id'  , 'pid'     , int),
     ]
 
     # Field names -> types for a market order API request that should be
     # stored
     __ORDER_FIELDS = [
-        ('system_id'     , int),
-        ('location_id'   , int),
-
-        ('is_buy_order'  , int),
-
-        ('min_volume'    , int),
-        ('volume_total'  , int),
-        ('volume_remain' , int),
-
-        ('price'         , float),
-        ('range'         , str),
+        ('system_id'        , 'sid'     , int),
+        ('location_id'      , 'lid'     , int),
+        ('is_buy_order'     , 'buy'     , int),
+        ('min_volume'       , 'minvol'  , int),
+        ('volume_total'     , 'totvol'  , int),
+        ('volume_remain'    , 'remvol'  , int),
+        ('price'            , 'price'   , float),
+        ('range'            , 'range'   , str),
     ]
 
     def __init__(self, config):
@@ -553,9 +550,9 @@ class RedisDatabase(database.Database):
     @classmethod
     def __extract_fields(cls, field_spec, field_dict):
         fields = {}
-        for field_key, field_type in field_spec:
+        for field_key, field_name, field_type in field_spec:
             if field_key in field_dict:
-                fields[field_key] = field_type(field_dict[field_key])
+                fields[field_name] = field_type(field_dict[field_key])
         return fields
 
     @classmethod
@@ -568,7 +565,7 @@ class RedisDatabase(database.Database):
         decoded_fields = {}
 
         index = 0
-        for field_name, field_type in field_spec:
+        for _, field_name, field_type in field_spec:
             decoded_fields[field_name] = field_type(field_components[index])
             index += 1
 
