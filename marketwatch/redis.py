@@ -385,7 +385,7 @@ class RedisDatabase(database.Database):
             The region info for the specified ID.
         """
 
-        region_info = self.__extract_fields(
+        region_info = self.__cast_fields(
             self.__REGION_FIELDS,
             self.__connection.hgetall(self.__region_info_name(region_id)))
         return region_info
@@ -416,7 +416,7 @@ class RedisDatabase(database.Database):
             The system info for the specified ID.
         """
 
-        system_info = self.__extract_fields(
+        system_info = self.__cast_fields(
             self.__SYSTEM_FIELDS,
             self.__connection.hgetall(self.__system_info_name(system_id)))
         return system_info
@@ -447,7 +447,7 @@ class RedisDatabase(database.Database):
             The location info for the specified ID.
         """
 
-        location_info = self.__extract_fields(
+        location_info = self.__cast_fields(
             self.__LOCATION_FIELDS,
             self.__connection.hgetall(self.__location_info_name(location_id)))
         return location_info
@@ -474,7 +474,7 @@ class RedisDatabase(database.Database):
             The market group info for the specified ID.
         """
 
-        group_info = self.__extract_fields(
+        group_info = self.__cast_fields(
             self.__MARKET_GROUP_FIELDS,
             self.__connection.hgetall(self.__group_info_name(group_id)))
         type_ids = self.__connection.lrange(
@@ -553,6 +553,14 @@ class RedisDatabase(database.Database):
         for field_key, field_name, field_type in field_spec:
             if field_key in field_dict:
                 fields[field_name] = field_type(field_dict[field_key])
+        return fields
+
+    @classmethod
+    def __cast_fields(cls, field_spec, field_dict):
+        fields = {}
+        for _, field_name, field_type in field_spec:
+            if field_name in field_dict:
+                fields[field_name] = field_type(field_dict[field_name])
         return fields
 
     @classmethod
