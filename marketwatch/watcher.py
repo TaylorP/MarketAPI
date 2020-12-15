@@ -50,7 +50,7 @@ class Watcher():
         self.__config = config
         self.__database = database.Database.instance(config)
         self.__fetch_delay = config['fetch_delay']
-        self.__global_api = api.API(config, 0)
+        self.__global_api = api.GlobalAPI(config)
         self.__region_apis = {}
         self.__wait_delay = config['wait_delay']
         self.__worker_pool = worker.WorkerPool(config)
@@ -92,7 +92,8 @@ class Watcher():
         for region_id in self.__database.get_regions():
             self.__worker_pool.log().info(
                 "\tAdding regional API for %i", region_id)
-            self.__region_apis[region_id] = api.API(self.__config, region_id)
+            self.__region_apis[region_id] = api.RegionalAPI(
+                self.__config, region_id)
 
     def __update_groups(self):
         self.__worker_pool.log().info("Updating market groups")

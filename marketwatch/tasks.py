@@ -217,11 +217,22 @@ class UpdateOrdersTask():
         self.__type_id = type_id
 
     def __call__(self, pool, worker):
+        location_infos = []
+        location_ids = []
         def __update(order_page, order_cache):
             if order_page:
                 worker.log().info("\tAdding new orders")
+
+                for order in order_page:
+                    location_info = self.__region_api.fetch_location_info(
+                        worker, order['location_id'])
+                    if location_info:
+                        location_infos.append(location_info)
+                        location_ids.append(order['location_id'])
+
                 worker.database().add_orders(
                     worker, self.__region_api.region_id(), order_page)
+
             if order_cache:
                 worker.log().info("\tRefreshing cached orders")
                 worker.database().refresh_orders(worker, order_cache)
@@ -237,3 +248,10 @@ class UpdateOrdersTask():
                 self.__region_api.region_id())
 
         self.__region_api.fetch_type_orders(worker, self.__type_id, __update)
+
+        if location_ids:
+            worker.log().info("Adding %d new locations", len(location_ids))
+
+            worker.database().add_location_info(worker, location_infos)
+            worker.database().add_region_locations(
+                worker, self.__region_api.region_id(), location_ids)

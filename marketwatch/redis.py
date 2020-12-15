@@ -46,9 +46,17 @@ class RedisDatabase(database.Database):
     # matching region ID
     __REGION_SYSTEM_KEY     = 'rs:{}'
 
+    # The key format for a Redis LIST that contains the locaton IDs in a
+    # matching region ID
+    __REGION_LOCATION_KEY   = 'rl:{}'
+
     # The key format for a Redis HASH that contains the info data for the
-    # maching system ID
+    # matching system ID
     __SYSTEM_INFO_KEY       = 'si:{}'
+
+    # The key format for a Redis HASH that contains the info data for the
+    # location ID
+    __LOCATION_INFO_KEY     = 'li:{}'
 
 
     # The key for the Redis LIST that contains all of the market group IDs
@@ -82,12 +90,19 @@ class RedisDatabase(database.Database):
         ('region_id'        , int),
     ]
 
-    # Field names -> typs from a system info API request at should be
-    # sotred
+    # Field names -> types from a system info API request that should
+    # be stored
     __SYSTEM_FIELDS = [
         ('name'             , str),
         ('security_status'  , float),
         ('system_id'        , int),
+    ]
+
+    # Field names -> types from a structure or station API request that
+    # should be stored
+    __LOCATION_FIELDS = [
+        ('name'             , str),
+        ('station_id'       , int),
     ]
 
     # Field names -> types from a market group info API request that should
@@ -103,8 +118,6 @@ class RedisDatabase(database.Database):
     __ORDER_FIELDS = [
         ('system_id'     , int),
         ('location_id'   , int),
-        ('type_id'       , int),
-        ('order_id'      , int),
 
         ('is_buy_order'  , int),
 
@@ -207,6 +220,44 @@ class RedisDatabase(database.Database):
             self.__SYSTEM_FIELDS,
             'system_id',
             self.__system_info_name)
+
+    def add_region_locations(self, worker, region_id, location_ids):
+        """
+        Adds the locations IDs in the specified region.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_id: The ID of the region that contains the locations.
+            locations_ids: The list of location IDs.
+        """
+
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                location_key = self.__region_location_name(region_id)
+                conn.rpush(location_key, *location_ids)
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(location_ids),
+            changed=len(location_ids),
+            runtime=timer.elapsed())
+
+    def add_location_info(self, worker, location_infos):
+        """
+        Adds the specified location infos to the database.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            location_infos: The list of location info fields to add.
+        """
+
+        self.__add_infos(
+            worker,
+            location_infos,
+            self.__LOCATION_FIELDS,
+            'station_id',
+            self.__location_info_name)
 
     def set_market_groups(self, worker, group_ids):
         """
@@ -373,6 +424,37 @@ class RedisDatabase(database.Database):
             self.__connection.hgetall(self.__system_info_name(system_id)))
         return system_info
 
+    def get_locations(self, region_id):
+        """
+        Queries the list of locatons IDs for the given region ID.
+
+        Args:
+            region_id:  The region ID to lookup in the database.
+
+        Returns:
+            The list of location IDs in the specified region ID.
+        """
+
+        location_ids = self.__connection.lrange(
+            self.__region_location_name(region_id), 0, -1)
+        return [int(location_id) for location_id in location_ids]
+
+    def get_location_info(self, location_id):
+        """
+        Queries location info for the specified ID.
+
+        Args:
+            location_id: The location ID to lookup in the database.
+
+        Returns:
+            The location info for the specified ID.
+        """
+
+        location_info = self.__extract_fields(
+            self.__LOCATION_FIELDS,
+            self.__connection.hgetall(self.__location_info_name(location_id)))
+        return location_info
+
     def get_groups(self):
         """
         Queries all market group IDs.
@@ -403,24 +485,27 @@ class RedisDatabase(database.Database):
         group_info['types'] = [int(type_id) for type_id in type_ids]
         return group_info
 
-    def get_orders(self, region_id, type_id):
+    def get_orders(self, region_id, type_id, orders=None):
         """
         Queries market orders for the specified region ID and type ID.
 
         Args:
             region_id: The region ID for filtering market orders
             type_id: The item type ID for the orders to query
+            orders: Optional list in which order infos should be written
+            locations: Optional set in which location IDs should be added
 
         Returns:
             The list of market orders for the item type in the specified
             region.
-
         """
 
         set_name = self.__type_set_name(region_id, type_id)
         order_ids = self.__connection.smembers(set_name)
 
-        orders = []
+        if orders is None:
+            orders = []
+
         for order_id in order_ids:
             encoded_order = self.__connection.get(order_id)
             if not encoded_order:
@@ -442,8 +527,16 @@ class RedisDatabase(database.Database):
         return cls.__REGION_SYSTEM_KEY.format(region_id)
 
     @classmethod
+    def __region_location_name(cls, region_id):
+        return cls.__REGION_LOCATION_KEY.format(region_id)
+
+    @classmethod
     def __system_info_name(cls, system_id):
         return cls.__SYSTEM_INFO_KEY.format(system_id)
+
+    @classmethod
+    def __location_info_name(cls, location_id):
+        return cls.__LOCATION_INFO_KEY.format(location_id)
 
     @classmethod
     def __group_info_name(cls, group_id):
@@ -461,9 +554,7 @@ class RedisDatabase(database.Database):
     def __extract_fields(cls, field_spec, field_dict):
         fields = {}
         for field_key, field_type in field_spec:
-            if not field_key in field_dict:
-                fields[field_key] = field_type()
-            else:
+            if field_key in field_dict:
                 fields[field_key] = field_type(field_dict[field_key])
         return fields
 

@@ -21,7 +21,7 @@
 #
 
 """
-Defines an API endpoint for fetching orders and static data from ESI.
+Defines an API endpoints for fetching market orders and static data from ESI.
 """
 
 import threading
@@ -29,10 +29,9 @@ import time
 
 from . import stats
 
-class API():
+class GlobalAPI():
     """
-    Contains metadata about an update operation for a specific region, and
-    methods for making ESI API calls. Methods are thread safe.
+    Base class for ESI API end points, and for fetching static data.
     """
 
     # The API endpoint for requesting region information for a given ID
@@ -44,10 +43,167 @@ class API():
     # The API endpoint for requesting system information for a given ID
     __SYSTEM_INFO   = 'https://esi.evetech.net/latest/universe/systems/{}'
 
-
     # The API endpoint for requesting market group IDs and market group
     # info
     __MARKET_GROUPS = 'https://esi.evetech.net/latest/markets/groups/{}'
+
+    def __init__(self, config):
+        """
+        Constructs a new API instance from the config
+
+        Args:
+            config: Configuration options for this API instance.
+        """
+
+        self.__user_agent = config['agent']
+
+    def fetch_regions(self, worker):
+        """
+        Fetches the list of regions IDs.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+
+        Returns:
+            The list of valid region IDs.
+        """
+
+        return self._fetch_unpaged(
+            worker, '', self.__REGION_INFO.format(''))
+
+    def fetch_region_info(self, worker, region_id):
+        """
+        Fetches the info for a particular region.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_id: The region ID to fetch.
+
+        Returns:
+            Region info fields for the specified ID.
+        """
+
+        return self._fetch_unpaged(
+            worker, '', self.__REGION_INFO.format(region_id))
+
+    def fetch_constellation_info(self, worker, constellation_id):
+        """
+        Fetches the info for a particular constellaton
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            constellation_id: The constellation ID to fetch.
+
+        Returns:
+            Constellation info fields for the specified ID.
+        """
+
+        return self._fetch_unpaged(
+            worker, '', self.__CONST_INFO.format(constellation_id))
+
+    def fetch_system_info(self, worker, system_id):
+        """
+        Fetches the info for a particular system
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            system_id: The system ID to fetch.
+
+        Returns:
+            System info fields for the specified ID.
+        """
+
+        return self._fetch_unpaged(
+            worker, '', self.__SYSTEM_INFO.format(system_id))
+
+    def fetch_market_groups(self, worker):
+        """
+        Fetches the list of market group IDs.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+
+        Returns:
+            The list of valid market group IDs.
+        """
+
+        return self._fetch_unpaged(
+            worker, '', self.__MARKET_GROUPS.format(''))
+
+    def fetch_market_group_info(self, worker, group_id):
+        """
+        Fetches the info for a particular market order.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            group_id: The market group ID to fetch.
+
+        Returns:
+            Market group info fields for the specified ID.
+        """
+
+        return self._fetch_unpaged(
+            worker, '', self.__MARKET_GROUPS.format(group_id))
+
+    def _fetch_unpaged(self, worker, etag, req_url, **kwargs):
+        num_errors = 3
+
+        data = None
+        with stats.Stats.Timer() as timer:
+            while True:
+                success, data = self._fetch_api_unpaged(
+                    worker, etag, req_url, **kwargs)
+
+                if success or num_errors == 0:
+                    break
+
+                num_errors -= 1
+                time.sleep(0.5)
+
+        worker.stats().update(stats.Stats.REQUEST, runtime=timer.elapsed())
+        return data
+
+    def _fetch_api_unpaged(self, worker, etag, req_url, **kwargs):
+        request, etag = self._fetch_api(worker, req_url, kwargs, etag)
+
+        if not request:
+            worker.stats().update(stats.Stats.REQUEST, total=1, failure=1)
+            return (False, None)
+
+        if request.status_code == 304:
+            worker.stats().update(stats.Stats.REQUEST, total=1)
+            return (True, None)
+
+        worker.stats().update(stats.Stats.REQUEST, total=1, changed=1)
+        return (True, request.json())
+
+    def _fetch_api(self, worker, url, params, etag):
+        headers = {
+            'If-None-Match': etag,
+            'User-Agent': self.__user_agent
+        }
+        request = worker.session().get(url, params=params, headers=headers)
+
+        try:
+            request.raise_for_status()
+        except Exception:
+            worker.log().exception("API request error")
+            return (None, "")
+
+        if 'etag' in request.headers:
+            etag = request.headers['etag']
+        else:
+            etag = ""
+
+        return (request, etag)
+
+class RegionalAPI(GlobalAPI):
+    """
+    ESI API endpoints for regional market data.
+    """
+
+    # The API endpoint for requesting NPC station information.
+    __STATION_INFO = 'https://esi.evetech.net/latest/universe/stations/{}/'
 
     # The API endpoint for requesting orders in a region, optionally with
     # a specified item type ID filter
@@ -57,6 +213,9 @@ class API():
     # in the specified region
     __REGION_TYPES  = 'https://esi.evetech.net/latest/markets/{}/types/'
 
+
+    # The maxmimum valid station ID
+    __STATION_MAX   = 69999999
 
     class Page():
         """
@@ -78,6 +237,10 @@ class API():
             region_id: The ID of the region that should be used for API calls.
         """
 
+        GlobalAPI.__init__(self, config)
+
+        self.__location_cache = {}
+
         self.__order_page_lock = threading.Lock()
         self.__order_pages = {}
 
@@ -85,7 +248,6 @@ class API():
         self.__type_pages = {}
 
         self.__region_id = region_id
-        self.__user_agent = config['agent']
 
     def region_id(self):
         """
@@ -94,93 +256,41 @@ class API():
 
         return self.__region_id
 
-    def fetch_regions(self, worker):
+    def fetch_location_info(self, worker, location_id):
         """
-        Fetches the list of regions IDs.
+        Returns structure or station info for the specified location ID.
 
         Args:
             worker: The marketwatch.worker.Worker containing local state.
+            location_id: The station or structure ID to lookup.
 
         Returns:
-            The list of valid region IDs.
+            The info fields for the specified ID.
         """
 
-        return self.__fetch_unpaged(
-            worker, '', self.__REGION_INFO.format(''))
+        if location_id in self.__location_cache:
+            return None
 
-    def fetch_region_info(self, worker, region_id):
+        self.__location_cache[location_id] = True
+
+        if location_id <= self.__STATION_MAX:
+            return self.fetch_station_info(worker, location_id)
+        return None
+
+    def fetch_station_info(self, worker, station_id):
         """
-        Fetches the info for a particular region.
+        Returns station info for the specified station ID.
 
         Args:
             worker: The marketwatch.worker.Worker containing local state.
-            region_id: The region ID to fetch.
+            station_id: The station ID to lookup.
 
         Returns:
-            Region info fields for the specified ID.
+            The info fields for the specified ID.
         """
 
-        return self.__fetch_unpaged(
-            worker, '', self.__REGION_INFO.format(region_id))
-
-    def fetch_constellation_info(self, worker, constellation_id):
-        """
-        Fetches the info for a particular constellaton
-
-        Args:
-            worker: The marketwatch.worker.Worker containing local state.
-            constellation_id: The constellation ID to fetch.
-
-        Returns:
-            Constellation info fields for the specified ID.
-        """
-
-        return self.__fetch_unpaged(
-            worker, '', self.__CONST_INFO.format(constellation_id))
-
-    def fetch_system_info(self, worker, system_id):
-        """
-        Fetches the info for a particular system
-
-        Args:
-            worker: The marketwatch.worker.Worker containing local state.
-            system_id: The system ID to fetch.
-
-        Returns:
-            System info fields for the specified ID.
-        """
-
-        return self.__fetch_unpaged(
-            worker, '', self.__SYSTEM_INFO.format(system_id))
-
-    def fetch_market_groups(self, worker):
-        """
-        Fetches the list of market group IDs.
-
-        Args:
-            worker: The marketwatch.worker.Worker containing local state.
-
-        Returns:
-            The list of valid market group IDs.
-        """
-
-        return self.__fetch_unpaged(
-            worker, '', self.__MARKET_GROUPS.format(''))
-
-    def fetch_market_group_info(self, worker, group_id):
-        """
-        Fetches the info for a particular market order.
-
-        Args:
-            worker: The marketwatch.worker.Worker containing local state.
-            group_id: The market group ID to fetch.
-
-        Returns:
-            Market group info fields for the specified ID.
-        """
-
-        return self.__fetch_unpaged(
-            worker, '', self.__MARKET_GROUPS.format(group_id))
+        return self._fetch_unpaged(
+            worker, '', self.__STATION_INFO.format(station_id))
 
     def fetch_type_orders(self, worker, type_id=None, callback=None):
         """
@@ -197,7 +307,7 @@ class API():
         """
 
         return self.__fetch_paged(
-            worker, callback, API.__fetch_type_order_page, type_id)
+            worker, callback, RegionalAPI.__fetch_type_order_page, type_id)
 
     def fetch_types(self, worker):
         """
@@ -211,59 +321,7 @@ class API():
             region associated with this API instance.
         """
 
-        return self.__fetch_paged(worker, None, API.__fetch_type_page)
-
-    def __fetch_paged(self, worker, callback, func, *args, **kwargs):
-        current_page = 1
-        num_errors = 3
-
-        data_pages = []
-        cache_pages = []
-        with stats.Stats.Timer() as timer:
-            while True:
-                max_pages, data, cache = func(
-                    self, worker, current_page, *args, **kwargs)
-
-                if max_pages < 1:
-                    if num_errors == 0:
-                        break
-
-                    num_errors -= 1
-                    time.sleep(0.5)
-                    continue
-
-                if callback:
-                    callback(data, cache)
-                else:
-                    if data:
-                        data_pages.append(data)
-                    if cache:
-                        cache_pages.append(cache)
-
-                if current_page >= max_pages:
-                    break
-                current_page += 1
-
-        worker.stats().update(stats.Stats.REQUEST, runtime=timer.elapsed())
-        return (data_pages, cache_pages)
-
-    def __fetch_unpaged(self, worker, etag, req_url, **kwargs):
-        num_errors = 3
-
-        data = None
-        with stats.Stats.Timer() as timer:
-            while True:
-                success, data = self.__fetch_api_unpaged(
-                    worker, etag, req_url, **kwargs)
-
-                if success or num_errors == 0:
-                    break
-
-                num_errors -= 1
-                time.sleep(0.5)
-
-        worker.stats().update(stats.Stats.REQUEST, runtime=timer.elapsed())
-        return data
+        return self.__fetch_paged(worker, None, RegionalAPI.__fetch_type_page)
 
     def __fetch_type_page(self, worker, number):
         with self.__type_page_lock:
@@ -302,11 +360,45 @@ class API():
 
         return (max_pages, orders, order_page.cache)
 
+    def __fetch_paged(self, worker, callback, func, *args, **kwargs):
+        current_page = 1
+        num_errors = 3
+
+        data_pages = []
+        cache_pages = []
+        with stats.Stats.Timer() as timer:
+            while True:
+                max_pages, data, cache = func(
+                    self, worker, current_page, *args, **kwargs)
+
+                if max_pages < 1:
+                    if num_errors == 0:
+                        break
+
+                    num_errors -= 1
+                    time.sleep(0.5)
+                    continue
+
+                if callback:
+                    callback(data, cache)
+                else:
+                    if data:
+                        data_pages.append(data)
+                    if cache:
+                        cache_pages.append(cache)
+
+                if current_page >= max_pages:
+                    break
+                current_page += 1
+
+        worker.stats().update(stats.Stats.REQUEST, runtime=timer.elapsed())
+        return (data_pages, cache_pages)
+
     def __fetch_api_page(self, worker, page, req_url, **kwargs):
         req_params = {'page': page.number}
         req_params.update(kwargs)
 
-        request, etag = self.__fetch_api(worker, req_url, req_params, page.etag)
+        request, etag = self._fetch_api(worker, req_url, req_params, page.etag)
         page.etag = etag
 
         if not request:
@@ -324,37 +416,3 @@ class API():
 
         worker.stats().update(stats.Stats.REQUEST, total=1, changed=1)
         return (max_pages, request.json())
-
-    def __fetch_api_unpaged(self, worker, etag, req_url, **kwargs):
-        request, etag = self.__fetch_api(worker, req_url, kwargs, etag)
-
-        if not request:
-            worker.stats().update(stats.Stats.REQUEST, total=1, failure=1)
-            return (False, None)
-
-        if request.status_code == 304:
-            worker.stats().update(stats.Stats.REQUEST, total=1)
-            return (True, None)
-
-        worker.stats().update(stats.Stats.REQUEST, total=1, changed=1)
-        return (True, request.json())
-
-    def __fetch_api(self, worker, url, params, etag):
-        headers = {
-            'If-None-Match': etag,
-            'User-Agent': self.__user_agent
-        }
-        request = worker.session().get(url, params=params, headers=headers)
-
-        try:
-            request.raise_for_status()
-        except Exception:
-            worker.log().exception("API request error")
-            return (None, "")
-
-        if 'etag' in request.headers:
-            etag = request.headers['etag']
-        else:
-            etag = ""
-
-        return (request, etag)
