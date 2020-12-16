@@ -123,7 +123,7 @@ class RedisDatabase(database.Database):
         ('name'             , 'name'    , str),
         ('market_group_id'  , 'id'      , int),
         ('parent_group_id'  , 'pid'     , int),
-        ('hastypes'         , 'hastypes', bool),
+        ('hastypes'         , 'hastypes', int),
     ]
 
     # Field names -> types for a market order API request that should be
