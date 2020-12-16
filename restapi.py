@@ -52,7 +52,11 @@ def location(location_id: int):
 @app.get("/market/groups")
 def groups():
     conn = database.Database.instance(config.CONFIG)
-    return conn.get_groups()
+    group_ids = conn.get_groups()
+    groups = []
+    for group_id in group_ids:
+        groups.append(conn.get_group_info(group_id))
+    return groups
 
 @app.get("/market/group/{group_id}")
 def group_types(group_id: int):
