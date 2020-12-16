@@ -54,6 +54,15 @@ def groups():
     conn = database.Database.instance(config.CONFIG)
     return conn.get_groups()
 
+@app.get("/market/group/{group_id}")
+def group_types(group_id: int):
+    conn = database.Database.instance(config.CONFIG)
+    type_ids = conn.get_group_types(group_id)
+    types = []
+    for type_id in type_ids:
+        types.append(conn.get_type_info(type_id))
+    return types
+
 @app.get("/market/orders/{type_id}")
 def orders(type_id: int):
     conn = database.Database.instance(config.CONFIG)
