@@ -59,6 +59,11 @@ class RedisDatabase(database.Database):
     __LOCATION_INFO_KEY     = 'li:{}'
 
 
+    # The key format for a Redis HASH that contains the info data for the
+    # matching item type ID
+    __TYPE_INFO_KEY         = 'ti:{}'
+
+
     # The key for the Redis LIST that contains all of the market group IDs
     __MARKET_GROUP_LIST     = 'mg'
 
@@ -105,12 +110,20 @@ class RedisDatabase(database.Database):
         ('station_id'       , 'id'      , int),
     ]
 
+    # Field names -> types from a item type info API request that should
+    # be stored
+    __TYPE_FIELDS = [
+        ('name'             , 'name'    , str),
+        ('type_id'          , 'id'      , int),
+    ]
+
     # Field names -> types from a market group info API request that should
     # be stored
     __MARKET_GROUP_FIELDS = [
         ('name'             , 'name'    , str),
         ('market_group_id'  , 'id'      , int),
         ('parent_group_id'  , 'pid'     , int),
+        ('hastypes'         , 'hastypes', bool),
     ]
 
     # Field names -> types for a market order API request that should be
@@ -256,6 +269,22 @@ class RedisDatabase(database.Database):
             'station_id',
             self.__location_info_name)
 
+    def add_type_info(self, worker, type_infos):
+        """
+        Adds the specified type infos to the database.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            type_infos: The list of type info fields to add.
+        """
+
+        self.__add_infos(
+            worker,
+            type_infos,
+            self.__TYPE_FIELDS,
+            'type_id',
+            self.__type_info_name)
+
     def set_market_groups(self, worker, group_ids):
         """
         Stores the specified market group IDs to a set in the database.
@@ -291,8 +320,9 @@ class RedisDatabase(database.Database):
             with self.__connection.pipeline() as conn:
                 for group_info in group_infos:
                     group_id = group_info['market_group_id']
+                    group_hash = self.__group_info_name(group_id)
                     conn.hset(
-                        self.__group_info_name(group_id),
+                        group_hash,
                         mapping=self.__extract_fields(
                             self.__MARKET_GROUP_FIELDS,
                             group_info))
@@ -302,6 +332,9 @@ class RedisDatabase(database.Database):
                         group_types = self.__group_type_name(group_id)
                         conn.delete(group_types)
                         conn.lpush(group_types, *type_list)
+                        conn.hset(group_hash, 'hastypes', 1)
+                    else:
+                        conn.hset(group_hash, 'hastypes', 0)
 
                 conn.execute()
 
@@ -452,6 +485,22 @@ class RedisDatabase(database.Database):
             self.__connection.hgetall(self.__location_info_name(location_id)))
         return location_info
 
+    def get_type_info(self, type_id):
+        """
+        Queries type info for the specified ID.
+
+        Args:
+            type_id: The type ID to lookup in the database.
+
+        Returns:
+            The type info for the specified ID.
+        """
+
+        type_info = self.__cast_fields(
+            self.__TYPE_FIELDS,
+            self.__connection.hgetall(self.__type_info_name(type_id)))
+        return type_info
+
     def get_groups(self):
         """
         Queries all market group IDs.
@@ -468,19 +517,29 @@ class RedisDatabase(database.Database):
         Queries market group info for the specified ID.
 
         Args:
-            group_id: The market group ID to lookup in the database
+            group_id: The market group ID to lookup in the database.
 
         Returns:
             The market group info for the specified ID.
         """
 
-        group_info = self.__cast_fields(
+        return self.__cast_fields(
             self.__MARKET_GROUP_FIELDS,
             self.__connection.hgetall(self.__group_info_name(group_id)))
-        type_ids = self.__connection.lrange(
+
+    def get_group_types(self, group_id):
+        """
+        Returns the list of type IDs contained in the specified market group.
+
+        Args:
+            group_id: The market group ID to lookup in the database.
+
+        Returns:
+            The type IDs for items in the market group.
+        """
+
+        return self.__connection.lrange(
             self.__group_type_name(group_id), 0, -1)
-        group_info['types'] = [int(type_id) for type_id in type_ids]
-        return group_info
 
     def get_orders(self, region_id, type_id, orders=None):
         """
@@ -534,6 +593,10 @@ class RedisDatabase(database.Database):
     @classmethod
     def __location_info_name(cls, location_id):
         return cls.__LOCATION_INFO_KEY.format(location_id)
+
+    @classmethod
+    def __type_info_name(cls, type_id):
+        return cls.__TYPE_INFO_KEY.format(type_id)
 
     @classmethod
     def __group_info_name(cls, group_id):

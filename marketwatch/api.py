@@ -43,6 +43,9 @@ class GlobalAPI():
     # The API endpoint for requesting system information for a given ID
     __SYSTEM_INFO   = 'https://esi.evetech.net/latest/universe/systems/{}'
 
+    # The API endpoint for requesting item type information for a given ID
+    __TYPE_INFO     = 'https://esi.evetech.net/latest/universe/types/{}'
+
     # The API endpoint for requesting market group IDs and market group
     # info
     __MARKET_GROUPS = 'https://esi.evetech.net/latest/markets/groups/{}'
@@ -115,6 +118,21 @@ class GlobalAPI():
 
         return self._fetch_unpaged(
             worker, '', self.__SYSTEM_INFO.format(system_id))
+
+    def fetch_type_info(self, worker, type_id):
+        """
+        Fetches the info for a particular item type.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            system_id: The item type ID to fetch.
+
+        Returns:
+            Type info fields for the specified ID.
+        """
+
+        return self._fetch_unpaged(
+            worker, '', self.__TYPE_INFO.format(type_id))
 
     def fetch_market_groups(self, worker):
         """
