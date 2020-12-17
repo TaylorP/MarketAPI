@@ -61,6 +61,9 @@ class Watcher():
         self.__universe_job = schedule.every().day.at(self.__static_time).do(
             self.__update_universe)
 
+        self.__group_cached = False
+        self.__universe_cached = False
+
     def watch(self):
         """
         Enters a blocking loop that fetches data, updates the database and
@@ -80,6 +83,18 @@ class Watcher():
                 schedule.run_pending()
                 self.__worker_pool.wait()
 
+            if not self.__universe_cached:
+                self.__database.set_universe_cache_expiry(
+                    self.__universe_job.last_run,
+                    self.__universe_job.next_run)
+                self.__universe_cached = True
+
+            if not self.__group_cached:
+                self.__database.set_market_group_cache_expiry(
+                    self.__group_job.last_run,
+                    self.__group_job.next_run)
+                self.__group_cached = True
+
             if timer.elapsed() > 1.0:
                 self.__worker_pool.log().info(
                     "Processed updated in %f seconds", timer.elapsed())
@@ -96,10 +111,6 @@ class Watcher():
                 self.__config, region_id)
 
     def __update_universe(self):
-        self.__worker_pool.log().info(
-            "Running universe job, next run %s",
-            self.__universe_job.next_run)
-
         if self.__config['fetch_regions']:
             self.__worker_pool.log().info("Updating universe")
             self.__worker_pool.enqueue(
@@ -109,27 +120,18 @@ class Watcher():
             self.__worker_pool.log().info("Skipping universe update")
 
         self.__init_regional_apis()
-
-        self.__database.set_universe_cache_expiry(self.__universe_job.next_run)
+        self.__universe_cached = False
 
     def __update_groups(self):
-        self.__worker_pool.log().info(
-            "Running market group job, next run %s",
-            self.__group_job.next_run)
-
         if self.__config['fetch_groups']:
             self.__worker_pool.log().info("Updating market groups")
             self.__worker_pool.enqueue(tasks.UpdateGroupsTask(self.__global_api))
         else:
             self.__worker_pool.log().info("Skipping market group update")
 
-        self.__database.set_market_group_cache_expiry(self.__group_job.next_run)
+        self.__group_cached = False
 
     def __update_orders(self):
-        self.__worker_pool.log().info(
-            "Running market order job, next run %s",
-            self.__order_job.next_run)
-
         if self.__config['fetch_orders']:
             self.__worker_pool.log().info("Updating orders for all regions")
             for _, region_api in self.__region_apis.items():

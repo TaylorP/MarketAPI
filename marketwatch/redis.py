@@ -162,17 +162,17 @@ class RedisDatabase(database.Database):
             db = config['database'],
             decode_responses=True)
 
-    def set_universe_cache_expiry(self, expires):
+    def set_universe_cache_expiry(self, modify, expire):
         """
         Stores the universe cache times to the database
 
         Args:
             worker: The marketwatch.worker.Worker containing local state.
             modify: The last modified time
-            update: The next update time
+            expire: The next update time
         """
 
-        self.__set_cache_expiry(self.__UNIVERSE_CACHE, expires)
+        self.__set_cache_expiry(self.__UNIVERSE_CACHE, modify, expire)
 
     def get_universe_cache_expiry(self):
         """
@@ -184,17 +184,17 @@ class RedisDatabase(database.Database):
 
         return self.__get_cache_expiry(self.__UNIVERSE_CACHE)
 
-    def set_market_group_cache_expiry(self, expires):
+    def set_market_group_cache_expiry(self, modify, expire):
         """
         Stores the market group cache times to the database
 
         Args:
             worker: The marketwatch.worker.Worker containing local state.
             modify: The last modified time
-            update: The next update time
+            expire: The next update time
         """
 
-        self.__set_cache_expiry(self.__MARKET_GROUP_CACHE, expires)
+        self.__set_cache_expiry(self.__MARKET_GROUP_CACHE, modify, expire)
 
     def get_market_group_cache_expiry(self):
         """
@@ -712,10 +712,10 @@ class RedisDatabase(database.Database):
     def __decode_order(cls, order_string):
         return cls.__decode_fields(cls.__ORDER_FIELDS, order_string, expiry=int)
 
-    def __set_cache_expiry(self, key, expires):
-        mod_str = datetime.datetime.now(datetime.timezone.utc).strftime(
+    def __set_cache_expiry(self, key, modify, expire):
+        mod_str = modify.astimezone(datetime.timezone.utc).strftime(
             '%a, %d %b %Y %H:%M:%S %Z')
-        exp_str = expires.astimezone(datetime.timezone.utc).strftime(
+        exp_str = expire.astimezone(datetime.timezone.utc).strftime(
             '%a, %d %b %Y %H:%M:%S %Z')
 
         cache_values = {
