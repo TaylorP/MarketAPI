@@ -12,7 +12,12 @@ CONFIG = {
     "pool_size"     : 4,
     "fetch_delay"   : 600,
     "wait_delay"    : 30,
+    "static_time"   : "11:30",
     "daemonize"     : False,
+
+    "fetch_regions" : False,
+    "fetch_groups"  : False,
+    "fetch_orders"  : True,
 
     "log_dir"       : "./logs",
     "log_size"      : 65536,

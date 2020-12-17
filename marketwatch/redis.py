@@ -35,6 +35,13 @@ class RedisDatabase(database.Database):
     Redis database implementation that stores market data to a Redis DB.
     """
 
+    # The key for the Redis HASH that contains universe cache times
+    __UNIVERSE_CACHE        = 'rc'
+
+    # The key for the Redis HASH that contains group cache times
+    __MARKET_GROUP_CACHE    = 'mc'
+
+
     # The key for the Redis LIST that contains all of the region IDs
     __REGION_LIST           = 'r'
 
@@ -154,6 +161,50 @@ class RedisDatabase(database.Database):
             port = config['port'],
             db = config['database'],
             decode_responses=True)
+
+    def set_universe_cache_expiry(self, expires):
+        """
+        Stores the universe cache times to the database
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            modify: The last modified time
+            update: The next update time
+        """
+
+        self.__set_cache_expiry(self.__UNIVERSE_CACHE, expires)
+
+    def get_universe_cache_expiry(self):
+        """
+        Returns the universe cache expiry values.
+
+        Returns:
+            The universe mod and expiry times.
+        """
+
+        return self.__get_cache_expiry(self.__UNIVERSE_CACHE)
+
+    def set_market_group_cache_expiry(self, expires):
+        """
+        Stores the market group cache times to the database
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            modify: The last modified time
+            update: The next update time
+        """
+
+        self.__set_cache_expiry(self.__MARKET_GROUP_CACHE, expires)
+
+    def get_market_group_cache_expiry(self):
+        """
+        Returns the market_group cache expiry values.
+
+        Returns:
+            The market group mod and expiry times.
+        """
+
+        return self.__get_cache_expiry(self.__MARKET_GROUP_CACHE)
 
     def set_regions(self, worker, region_ids):
         """
@@ -660,6 +711,21 @@ class RedisDatabase(database.Database):
     @classmethod
     def __decode_order(cls, order_string):
         return cls.__decode_fields(cls.__ORDER_FIELDS, order_string, expiry=int)
+
+    def __set_cache_expiry(self, key, expires):
+        mod_str = datetime.datetime.now(datetime.timezone.utc).strftime(
+            '%a, %d %b %Y %H:%M:%S %Z')
+        exp_str = expires.astimezone(datetime.timezone.utc).strftime(
+            '%a, %d %b %Y %H:%M:%S %Z')
+
+        cache_values = {
+            'modify': mod_str,
+            'expire': exp_str
+        }
+        self.__connection.hset(key, mapping=cache_values)
+
+    def __get_cache_expiry(self, key):
+        return self.__connection.hgetall(key)
 
     def __add_infos(self, worker, infos, field_spec, id_key, hash_func):
         with stats.Stats.Timer() as timer:
