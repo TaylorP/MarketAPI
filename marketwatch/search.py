@@ -28,6 +28,7 @@ import os
 
 from whoosh.index import create_in, exists_in, open_dir
 from whoosh.fields import NGRAMWORDS, STORED, Schema
+from whoosh.highlight import WholeFragmenter
 from whoosh.qparser import QueryParser
 
 class SearchIndex():
@@ -100,4 +101,5 @@ class SearchIndex():
             parser = QueryParser("name", schema=index.schema)
             query = parser.parse(search_string)
             results = searcher.search(query, limit=limit)
-            return [(result['name'], result['type_id']) for result in results]
+            results.fragmenter = WholeFragmenter()
+            return [(result.highlights('name'), result['type_id']) for result in results]
