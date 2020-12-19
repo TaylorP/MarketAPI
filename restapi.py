@@ -103,7 +103,7 @@ def search_types(type_name: Optional[str] = None):
         return []
 
     index = search.SearchIndex(config.CONFIG)
-    return index.search_index(type_name)
+    return index.search_index(type_name, 15)
 
 @app.get("/market/orders/{type_id}")
 def orders(type_id: int):

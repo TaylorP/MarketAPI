@@ -102,4 +102,15 @@ class SearchIndex():
             query = parser.parse(search_string)
             results = searcher.search(query, limit=limit)
             results.fragmenter = WholeFragmenter()
-            return [(result.highlights('name'), result['type_id']) for result in results]
+
+            result_info = []
+            for result in results:
+                info = {
+                    'name': result['name'],
+                    'highlight': result.highlights('name'),
+                    'id': result['type_id']
+                }
+
+                result_info.append(info)
+
+            return result_info
