@@ -17,7 +17,10 @@ CONFIG = {
 
     "fetch_regions" : False,
     "fetch_groups"  : False,
-    "fetch_orders"  : True,
+    "fetch_orders"  : False,
+    "build_index"   : True,
+
+    "index_dir"     : "./search",
 
     "log_dir"       : "./logs",
     "log_size"      : 65536,

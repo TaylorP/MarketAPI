@@ -31,6 +31,7 @@ import schedule
 
 from . import api
 from . import database
+from . import search
 from . import stats
 from . import tasks
 from . import worker
@@ -128,6 +129,16 @@ class Watcher():
             self.__worker_pool.enqueue(tasks.UpdateGroupsTask(self.__global_api))
         else:
             self.__worker_pool.log().info("Skipping market group update")
+
+        if self.__config['build_index']:
+            self.__worker_pool.wait()
+
+            self.__worker_pool.log().info("Building search index")
+            with stats.Stats.Timer() as timer:
+                index = search.SearchIndex(self.__config)
+                index.build_index(self.__database, True)
+            self.__worker_pool.log().info("Built index in %f seconds",
+                timer.elapsed())
 
         self.__group_cached = False
 

@@ -1,7 +1,9 @@
-from typing import List
+from typing import List, Optional
+from urllib.parse import unquote
 
 from fastapi import FastAPI, Response
 from marketwatch import database
+from marketwatch import search
 
 import config
 
@@ -95,6 +97,14 @@ def group_types(response: Response, group_id: int):
 
     return types
 
+@app.get("/search")
+def search_types(type_name: Optional[str] = None):
+    if not type_name:
+        return []
+
+    index = search.SearchIndex(config.CONFIG)
+    return index.search_index(type_name)
+
 @app.get("/market/orders/{type_id}")
 def orders(type_id: int):
     conn = database.Database.instance(config.CONFIG)
@@ -110,3 +120,7 @@ def region_orders(type_id: int, region_id: int):
     conn = database.Database.instance(config.CONFIG)
     return conn.get_orders(region_id, type_id)
 
+@app.get("/market/orders/{type_id}/{region_id}/{system_id}")
+def system_orders(type_id: int, region_id: int, system_id: int):
+    conn = database.Database.instance(config.CONFIG)
+    return conn.get_orders(region_id, type_id)

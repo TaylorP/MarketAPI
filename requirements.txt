@@ -5,3 +5,4 @@ redis
 requests
 schedule
 uvicorn[standard]
+Whoosh
