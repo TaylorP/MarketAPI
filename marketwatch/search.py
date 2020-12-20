@@ -28,9 +28,10 @@ from enum import Enum
 import os
 
 from whoosh.index import create_in, exists_in, open_dir
-from whoosh.fields import NGRAMWORDS, STORED, Schema
+from whoosh.fields import NGRAMWORDS, NUMERIC, STORED, Schema
 from whoosh.highlight import WholeFragmenter
 from whoosh.qparser import QueryParser
+from whoosh.query import NumericRange, Term
 
 class SearchIndex():
     """
@@ -75,7 +76,7 @@ class SearchIndex():
         self.__create_region_index(database, rebuild)
         self.__create_type_index(database, rebuild)
 
-    def search(self, search_type, search_string, limit=10):
+    def search(self, search_type, search_string, pid=0, limit=10):
         """
         Searches for the specified string in the index, if it has been
         created.
@@ -95,7 +96,11 @@ class SearchIndex():
         with index.searcher() as searcher:
             parser = QueryParser("name", schema=index.schema)
             query = parser.parse(search_string)
-            results = searcher.search(query, limit=limit)
+            if pid:
+                parent_filter = NumericRange("pid", pid, pid)
+            else:
+                parent_filter = None
+            results = searcher.search(query, filter=parent_filter, limit=limit)
             results.fragmenter = WholeFragmenter()
 
             result_info = []
@@ -112,29 +117,42 @@ class SearchIndex():
 
     def __create_region_index(self, database, rebuild):
         index = self.__create_index(self.Type.REGION, rebuild)
-
         region_ids = database.get_regions()
 
         writer = index.writer()
         for region_id in region_ids:
             region_info = database.get_region_info(region_id)
-            writer.add_document(name=region_info['name'], id=region_info['id'])
+            writer.add_document(
+                name=region_info['name'],
+                id=region_info['id'])
+        writer.commit()
 
+        index = self.__create_index(self.Type.SYSTEM, rebuild)
+
+        writer = index.writer()
+        for region_id in region_ids:
+            system_ids = database.get_systems(region_id)
+            for system_id in system_ids:
+                system_info = database.get_system_info(system_id)
+                writer.add_document(
+                    name=system_info['name'],
+                    id=system_info['id'],
+                    pid=region_id)
         writer.commit()
 
     def __create_type_index(self, database, rebuild):
         index = self.__create_index(self.Type.TYPE, rebuild)
 
-        group_ids = database.get_groups()
         type_ids = []
-        for group_id in group_ids:
+        for group_id in database.get_groups():
             type_ids += database.get_group_types(group_id)
 
         writer = index.writer()
         for type_id in type_ids:
             type_info = database.get_type_info(type_id)
-            writer.add_document(name=type_info['name'], id=type_info['id'])
-
+            writer.add_document(
+                name=type_info['name'],
+                id=type_info['id'])
         writer.commit()
 
     def __create_index(self, index_entry, rebuild):
@@ -144,5 +162,6 @@ class SearchIndex():
 
         schema = Schema(
             name=NGRAMWORDS(queryor=True, maxsize=20, stored=True),
-            id=STORED)
+            id=STORED,
+            pid=NUMERIC(signed=False, default=0))
         return create_in(self.__index_dir, schema, index_name)
