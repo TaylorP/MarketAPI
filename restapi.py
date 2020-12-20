@@ -97,13 +97,13 @@ def group_types(response: Response, group_id: int):
 
     return types
 
-@app.get("/search")
-def search_types(type_name: Optional[str] = None):
-    if not type_name:
+@app.get("/search/{search_type}")
+def search_types(search_type: int, query: Optional[str]=""):
+    if not query:
         return []
 
     index = search.SearchIndex(config.CONFIG)
-    return index.search_index(type_name, 15)
+    return index.search(search.SearchIndex.Type(search_type), query, 15)
 
 @app.get("/market/orders/{type_id}")
 def orders(type_id: int):

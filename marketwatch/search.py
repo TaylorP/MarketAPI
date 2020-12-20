@@ -24,6 +24,7 @@
 Item type name search index
 """
 
+from enum import Enum
 import os
 
 from whoosh.index import create_in, exists_in, open_dir
@@ -35,6 +36,19 @@ class SearchIndex():
     """
     Utility functions for accessing and creating a search index.
     """
+
+    class Type(Enum):
+        """
+        Enumeration of the different type of search domains.
+        """
+        # Search index for region names
+        REGION  = 0
+
+        # Search index for system names
+        SYSTEM  = 1
+
+        # Search index for item type names
+        TYPE    = 2
 
     def __init__(self, config):
         """
@@ -58,29 +72,10 @@ class SearchIndex():
         """
 
         os.makedirs(self.__index_dir, exist_ok=True)
+        self.__create_region_index(database, rebuild)
+        self.__create_type_index(database, rebuild)
 
-        if exists_in(self.__index_dir) and not rebuild:
-            index = open_dir(self.__index_dir)
-        else:
-            index = create_in(
-                self.__index_dir,
-                Schema(
-                    name=NGRAMWORDS(queryor=True, maxsize=20, stored=True),
-                    type_id=STORED))
-
-        group_ids = database.get_groups()
-        type_ids = []
-        for group_id in group_ids:
-            type_ids += database.get_group_types(group_id)
-
-        writer = index.writer()
-        for type_id in type_ids:
-            type_info = database.get_type_info(type_id)
-            writer.add_document(name=type_info['name'], type_id=type_info['id'])
-
-        writer.commit()
-
-    def search_index(self, search_string, limit=10):
+    def search(self, search_type, search_string, limit=10):
         """
         Searches for the specified string in the index, if it has been
         created.
@@ -93,10 +88,10 @@ class SearchIndex():
             A list of (string, id) result pairs.
         """
 
-        if not exists_in(self.__index_dir):
+        if not exists_in(self.__index_dir, search_type.name):
             return []
 
-        index = open_dir(self.__index_dir)
+        index = open_dir(self.__index_dir, search_type.name)
         with index.searcher() as searcher:
             parser = QueryParser("name", schema=index.schema)
             query = parser.parse(search_string)
@@ -108,9 +103,46 @@ class SearchIndex():
                 info = {
                     'name': result['name'],
                     'highlight': result.highlights('name'),
-                    'id': result['type_id']
+                    'id': result['id']
                 }
 
                 result_info.append(info)
 
             return result_info
+
+    def __create_region_index(self, database, rebuild):
+        index = self.__create_index(self.Type.REGION, rebuild)
+
+        region_ids = database.get_regions()
+
+        writer = index.writer()
+        for region_id in region_ids:
+            region_info = database.get_region_info(region_id)
+            writer.add_document(name=region_info['name'], id=region_info['id'])
+
+        writer.commit()
+
+    def __create_type_index(self, database, rebuild):
+        index = self.__create_index(self.Type.TYPE, rebuild)
+
+        group_ids = database.get_groups()
+        type_ids = []
+        for group_id in group_ids:
+            type_ids += database.get_group_types(group_id)
+
+        writer = index.writer()
+        for type_id in type_ids:
+            type_info = database.get_type_info(type_id)
+            writer.add_document(name=type_info['name'], id=type_info['id'])
+
+        writer.commit()
+
+    def __create_index(self, index_entry, rebuild):
+        index_name = index_entry.name
+        if exists_in(self.__index_dir, index_name) and not rebuild:
+            return open_dir(self.__index_dir, index_name)
+
+        schema = Schema(
+            name=NGRAMWORDS(queryor=True, maxsize=20, stored=True),
+            id=STORED)
+        return create_in(self.__index_dir, schema, index_name)
