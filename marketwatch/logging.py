@@ -41,7 +41,7 @@ class Logging():
         Creates a rolling log
         """
 
-        os.makedirs(config['log_dir'], exist_ok=True)
+        os.makedirs(config.get('logging', 'dir'), exist_ok=True)
 
         log = logging.getLogger(log_name)
         log.setLevel(logging.INFO)
@@ -50,13 +50,13 @@ class Logging():
             '[%(levelname)s]: %(asctime)s -- %(message)s')
 
         handler = RotatingFileHandler(
-            '{}/{}.log'.format(config['log_dir'], log_file),
-            maxBytes = config['log_size'],
-            backupCount = config['log_count'])
+            '{}/{}.log'.format(config.get('logging', 'dir'), log_file),
+            maxBytes = config.getint('logging', 'roll_size'),
+            backupCount = config.getint('logging', 'roll_count'))
         handler.setFormatter(formatter)
         log.addHandler(handler)
 
-        if config['log_shell']:
+        if config.getboolean('logging', 'shell'):
             error_handler = StreamHandler()
             error_handler.setLevel(logging.ERROR)
             error_handler.setFormatter(formatter)

@@ -31,7 +31,7 @@ from whoosh.index import create_in, exists_in, open_dir
 from whoosh.fields import NGRAMWORDS, NUMERIC, STORED, Schema
 from whoosh.highlight import WholeFragmenter
 from whoosh.qparser import QueryParser
-from whoosh.query import NumericRange, Term
+from whoosh.query import NumericRange
 
 class SearchIndex():
     """
@@ -60,7 +60,7 @@ class SearchIndex():
         """
 
         self.__built = False
-        self.__index_dir = config['index_dir']
+        self.__index_dir = config.get('search', 'index')
 
     def build_index(self, database, rebuild=False):
         """

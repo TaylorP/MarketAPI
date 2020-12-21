@@ -34,7 +34,11 @@ class Database():
         """
         Returns a new database instance from the supplied config dictionary
         """
-        return config['db_type'](config['db_opts'])
+        if config.get('database', 'type') == 'redis':
+            from . import redis
+            return redis.RedisDatabase(config)
+
+        raise NotImplementedError
 
     def set_regions(self, worker, region_ids):
         """

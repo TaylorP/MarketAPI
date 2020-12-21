@@ -1,3 +1,5 @@
+import configparser
+
 from typing import List, Optional
 from urllib.parse import unquote
 
@@ -5,13 +7,14 @@ from fastapi import FastAPI, Response
 from marketwatch import database
 from marketwatch import search
 
-import config
-
 app = FastAPI()
+
+config = configparser.ConfigParser()
+config.read("default.ini")
 
 @app.get("/universe/regions")
 def regions(response: Response):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
 
     cache_expiry = conn.get_universe_cache_expiry()
     if cache_expiry:
@@ -27,7 +30,7 @@ def regions(response: Response):
 
 @app.get("/universe/systems/{region_id}")
 def systems(response: Response, region_id: int):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
 
     cache_expiry = conn.get_universe_cache_expiry()
     if cache_expiry:
@@ -43,7 +46,7 @@ def systems(response: Response, region_id: int):
 
 @app.get("/universe/locations/{region_id}")
 def locations(region_id: int):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
     location_ids = conn.get_locations(region_id)
     locations = []
     for location_id in location_ids:
@@ -52,7 +55,7 @@ def locations(region_id: int):
 
 @app.post("/universe/locations")
 def locations(location_ids: List[int]):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
     locations = []
     for location_id in location_ids:
         location_info = conn.get_location_info(location_id)
@@ -62,12 +65,12 @@ def locations(location_ids: List[int]):
 
 @app.get("/universe/location/{location_id}")
 def location(location_id: int):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
     return conn.get_location_info(location_id)
 
 @app.get("/market/groups")
 def groups(response: Response):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
 
     cache_expiry = conn.get_market_group_cache_expiry()
     if cache_expiry:
@@ -83,7 +86,7 @@ def groups(response: Response):
 
 @app.get("/market/group/{group_id}")
 def group_types(response: Response, group_id: int):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
 
     cache_expiry = conn.get_market_group_cache_expiry()
     if cache_expiry:
@@ -102,12 +105,12 @@ def search_types(search_type: int, query: Optional[str]="", pid: Optional[int]=0
     if not query:
         return []
 
-    index = search.SearchIndex(config.CONFIG)
+    index = search.SearchIndex(config)
     return index.search(search.SearchIndex.Type(search_type), query, pid, 15)
 
 @app.get("/market/orders/{type_id}")
 def orders(type_id: int):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
     regions = conn.get_regions()
 
     orders = []
@@ -117,10 +120,10 @@ def orders(type_id: int):
 
 @app.get("/market/orders/{type_id}/{region_id}")
 def region_orders(type_id: int, region_id: int):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
     return conn.get_orders(region_id, type_id)
 
 @app.get("/market/orders/{type_id}/{region_id}/{system_id}")
 def system_orders(type_id: int, region_id: int, system_id: int):
-    conn = database.Database.instance(config.CONFIG)
+    conn = database.Database.instance(config)
     return conn.get_orders(region_id, type_id)

@@ -157,9 +157,9 @@ class RedisDatabase(database.Database):
         database.Database.__init__(self)
 
         self.__connection = redis.StrictRedis(
-            host = config['host'],
-            port = config['port'],
-            db = config['database'],
+            host = config.get('database', 'host'),
+            port = config.getint('database', 'port'),
+            db = config.getint('database', 'database'),
             decode_responses=True)
 
     def set_universe_cache_expiry(self, modify, expire):

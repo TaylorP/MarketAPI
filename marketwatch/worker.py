@@ -86,7 +86,7 @@ class WorkerPool():
         self.__queue = queue.Queue()
         self.__workers = []
 
-        for i in range(config['pool_size']):
+        for i in range(config.getint('pool', 'size')):
             worker_index = i + base_index
             worker_name = "Worker{:02}".format(worker_index)
 

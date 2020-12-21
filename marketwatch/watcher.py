@@ -25,7 +25,6 @@ Core watcher classes for continually fetching and storing data from the ESI
 market endpoints.
 """
 
-import datetime
 import time
 import schedule
 
@@ -48,19 +47,16 @@ class Watcher():
 
         self.__config = config
         self.__database = database.Database.instance(config)
-        self.__fetch_delay = config['fetch_delay']
         self.__global_api = api.GlobalAPI(config)
         self.__region_apis = {}
-        self.__static_time = config['static_time']
-        self.__wait_delay = config['wait_delay']
         self.__worker_pool = worker.WorkerPool(config)
 
-        self.__group_job = schedule.every().day.at(self.__static_time).do(
-            self.__update_groups)
-        self.__order_job = schedule.every(self.__fetch_delay).seconds.do(
-            self.__update_orders)
-        self.__universe_job = schedule.every().day.at(self.__static_time).do(
-            self.__update_universe)
+        self.__group_job = schedule.every().day.at(
+            config.get('job', 'static_time')).do(self.__update_groups)
+        self.__order_job = schedule.every(
+            config.getint('job', 'update_rate')).seconds.do(self.__update_orders)
+        self.__universe_job = schedule.every().day.at(
+            config.get('job', 'static_time')).do(self.__update_universe)
 
         self.__group_cached = False
         self.__universe_cached = False
@@ -71,13 +67,21 @@ class Watcher():
         sleeps for the remaning time as defined in the config
         """
 
-        self.__worker_pool.log().info("Scheduling initial update jobs")
+        self.__worker_pool.log().info("Scheduling and running initial jobs")
 
         self.__universe_job.run()
         self.__group_job.run()
         self.__order_job.run()
 
-        self.__worker_pool.log().info("Starting watcher loop")
+        self.__worker_pool.log().info(
+            "Starting job loop w/ update rate of %ds",
+            self.__config.getint('pool', 'update_rate'))
+        self.__worker_pool.log().info(
+            "\tFetching orders every %d seconds",
+            self.__config.getint('job', 'update_rate'))
+        self.__worker_pool.log().info(
+            "\tStatic data update occurs daily at %s",
+            self.__config.get('job', 'static_time'))
 
         while True:
             with stats.Stats.Timer() as timer:
@@ -100,7 +104,7 @@ class Watcher():
                 self.__worker_pool.log().info(
                     "Processed updated in %f seconds", timer.elapsed())
 
-            time.sleep(self.__wait_delay)
+            time.sleep(self.__config.getint('pool', 'update_rate'))
 
     def __init_regional_apis(self):
         self.__region_apis = {}
@@ -112,7 +116,7 @@ class Watcher():
                 self.__config, region_id)
 
     def __update_universe(self):
-        if self.__config['fetch_regions']:
+        if self.__config.getboolean('job', 'regions'):
             self.__worker_pool.log().info("Updating universe")
             self.__worker_pool.enqueue(
                 tasks.UpdateRegionsTask(self.__global_api))
@@ -124,13 +128,13 @@ class Watcher():
         self.__universe_cached = False
 
     def __update_groups(self):
-        if self.__config['fetch_groups']:
+        if self.__config.getboolean('job', 'groups'):
             self.__worker_pool.log().info("Updating market groups")
             self.__worker_pool.enqueue(tasks.UpdateGroupsTask(self.__global_api))
         else:
             self.__worker_pool.log().info("Skipping market group update")
 
-        if self.__config['build_index']:
+        if self.__config.getboolean('job', 'index'):
             self.__worker_pool.wait()
 
             self.__worker_pool.log().info("Building search index")
@@ -143,7 +147,7 @@ class Watcher():
         self.__group_cached = False
 
     def __update_orders(self):
-        if self.__config['fetch_orders']:
+        if self.__config.getboolean('job', 'orders'):
             self.__worker_pool.log().info("Updating orders for all regions")
             for _, region_api in self.__region_apis.items():
                 self.__worker_pool.enqueue(tasks.UpdateOrdersTask(region_api))

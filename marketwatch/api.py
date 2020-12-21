@@ -58,7 +58,7 @@ class GlobalAPI():
             config: Configuration options for this API instance.
         """
 
-        self.__user_agent = config['agent']
+        self.__user_agent = config.get('request', 'agent')
 
     def fetch_regions(self, worker):
         """
