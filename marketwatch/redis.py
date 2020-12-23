@@ -608,20 +608,37 @@ class RedisDatabase(database.Database):
         """
 
         set_name = self.__type_set_name(region_id, type_id)
-        order_ids = self.__connection.smembers(set_name)
+        order_ids = list(self.__connection.smembers(set_name))
 
         if orders is None:
             orders = []
 
-        for order_id in order_ids:
-            encoded_order = self.__connection.get(order_id)
-            if not encoded_order:
-                self.__connection.srem(set_name, order_id)
-            else:
-                ttl = self.__connection.ttl(order_id)
-                order_fields = self.__decode_order(encoded_order)
-                order_fields['age'] = (self.__MARKET_ORDER_TTL - ttl)
-                orders.append(order_fields)
+        remove_ids = []
+
+        with self.__connection.pipeline() as conn:
+            for order_id in order_ids:
+                conn.get(order_id)
+                conn.ttl(order_id)
+
+            results = conn.execute()
+            index = 0
+            order_index = 0
+            while index < len(results):
+                if not results[index]:
+                    remove_ids.append(order_ids[order_index])
+                else:
+                    order_fields = self.__decode_order(results[index])
+                    ttl = results[index+1]
+                    order_fields['age'] = (self.__MARKET_ORDER_TTL - ttl)
+                    orders.append(order_fields)
+
+                order_index += 1
+                index += 2
+
+        with self.__connection.pipeline() as conn:
+            for remove_id in remove_ids:
+                conn.srem(set_name, remove_id)
+            conn.execute()
 
         return orders
 
