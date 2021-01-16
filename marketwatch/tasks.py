@@ -171,6 +171,8 @@ class UpdateGroupInfoTask():
         for group_id in self.__group_ids:
             group_info = self.__global_api.fetch_market_group_info(
                 worker, group_id)
+            if not group_info:
+                continue
 
             group_infos.append(group_info)
             if 'types' in group_info:
@@ -224,24 +226,59 @@ class UpdateOrdersTask():
         """
 
         self.__region_api = region_api
+        self.__region_id = region_api.region_id()
         self.__type_id = type_id
 
     def __call__(self, pool, worker):
         location_infos = []
         location_ids = []
+        structure_ids = []
+
+        def __update_structure(order_page, order_cache):
+            if order_page:
+                worker.log().info("\tAdding new orders")
+
+                for order in order_page:
+                    order['system_id'] = self.__system_id
+
+                worker.database().add_orders(
+                    worker, self.__region_id, order_page)
+
+            if order_cache:
+                worker.log().info("\tRefreshing cached orders")
+                worker.database().refresh_orders(worker, order_cache)
+
         def __update(order_page, order_cache):
             if order_page:
                 worker.log().info("\tAdding new orders")
 
                 for order in order_page:
-                    location_info = self.__region_api.fetch_location_info(
-                        worker, order['location_id'])
+                    location_id = order['location_id']
+                    location_info, was_cached = self.__region_api.fetch_location_info(
+                        worker, location_id)
+                    if was_cached:
+                        continue
+
                     if location_info:
-                        location_infos.append(location_info)
-                        location_ids.append(order['location_id'])
+                        system_info = worker.database().get_system_info(location_info['system_id'])
+                        location_info['security_status'] = system_info['sec']
+                        if location_info['is_struct']:
+                            structure_ids.append(location_id)
+                    else:
+                        system_info = worker.database().get_system_info(order['system_id'])
+                        location_info = {
+                            'is_struct': True,
+                            'name': system_info['name'] + ' - Unknown Citadel',
+                            'security_status': system_info['sec'],
+                            'station_id': location_id,
+                            'system_id': order['system_id']
+                        }
+  
+                    location_infos.append(location_info)
+                    location_ids.append(location_id)
 
                 worker.database().add_orders(
-                    worker, self.__region_api.region_id(), order_page)
+                    worker, self.__region_id, order_page)
 
             if order_cache:
                 worker.log().info("\tRefreshing cached orders")
@@ -250,18 +287,32 @@ class UpdateOrdersTask():
         if self.__type_id:
             worker.log().info(
                 "Fetching market orders for region `%d`, type `%d`",
-                self.__region_api.region_id(),
+                self.__.region_id,
                 self.__type_id)
         else:
             worker.log().info(
                 "Fetching market orders for region `%d`",
-                self.__region_api.region_id())
+                self.__region_id)
 
         self.__region_api.fetch_type_orders(worker, self.__type_id, __update)
 
+        worker.log().info("Adding %d new locations", len(location_ids))
         if location_ids:
-            worker.log().info("Adding %d new locations", len(location_ids))
-
             worker.database().add_location_info(worker, location_infos)
             worker.database().add_region_locations(
-                worker, self.__region_api.region_id(), location_ids)
+                worker, self.__region_id, location_ids)
+            
+        worker.log().info("Adding %d new accessible structures",
+            len(structure_ids))
+        if structure_ids:
+            worker.database().add_region_structures(
+                worker, self.__region_id, structure_ids)
+
+        for structure_id in worker.database().get_structures(self.__region_id):
+            worker.log().info("Fetching market orders for structure %d", structure_id)
+            location_info = worker.database().get_location_info(structure_id)
+            if location_info:
+                self.__system_id = location_info['sid']
+            else:
+                self.__system_id = 0
+            self.__region_api.fetch_structure_orders(worker, structure_id, __update_structure)

@@ -30,13 +30,14 @@ class Database():
     """
 
     @classmethod
-    def instance(cls, config):
+    def instance(cls, config, database=None):
         """
         Returns a new database instance from the supplied config dictionary
         """
         if config.get('database', 'type') == 'redis':
             from . import redis
-            return redis.RedisDatabase(config)
+            db = database if database else config.getint('database', 'database')
+            return redis.RedisDatabase(config, db)
 
         raise NotImplementedError
 

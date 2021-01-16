@@ -68,6 +68,28 @@ def location(location_id: int):
     conn = database.Database.instance(config)
     return conn.get_location_info(location_id)
 
+@app.get("/universe/types")
+def types(response: Response):
+    conn = database.Database.instance(config)
+
+    cache_expiry = conn.get_universe_cache_expiry()
+    if cache_expiry:
+        response.headers['Last-Modified'] = cache_expiry['modify']
+        response.headers['Expires'] = cache_expiry['expire']
+
+    return conn.get_types()
+
+@app.get("/universe/type/{type_id}")
+def type(response: Response, type_id: int):
+    conn = database.Database.instance(config)
+
+    cache_expiry = conn.get_universe_cache_expiry()
+    if cache_expiry:
+        response.headers['Last-Modified'] = cache_expiry['modify']
+        response.headers['Expires'] = cache_expiry['expire']
+    
+    return conn.get_type_info(type_id)
+
 @app.get("/market/groups")
 def groups(response: Response):
     conn = database.Database.instance(config)
@@ -110,20 +132,21 @@ def search_types(search_type: int, query: Optional[str]="", pid: Optional[int]=0
 
 @app.get("/market/orders/{type_id}")
 def orders(type_id: int):
-    conn = database.Database.instance(config)
-    regions = conn.get_regions()
+    conn0 = database.Database.instance(config, 0)
+    conn1 = database.Database.instance(config, 0)
+    regions = conn0.get_regions()
 
     orders = []
     for region_id in regions:
-        conn.get_orders(region_id, type_id, orders)
+        conn1.get_orders(region_id, type_id, orders=orders)
     return orders
 
 @app.get("/market/orders/{type_id}/{region_id}")
 def region_orders(type_id: int, region_id: int):
-    conn = database.Database.instance(config)
+    conn = database.Database.instance(config, 0)
     return conn.get_orders(region_id, type_id)
 
 @app.get("/market/orders/{type_id}/{region_id}/{system_id}")
 def system_orders(type_id: int, region_id: int, system_id: int):
-    conn = database.Database.instance(config)
-    return conn.get_orders(region_id, type_id)
+    conn = database.Database.instance(config, 0)
+    return conn.get_orders(region_id, type_id, system_id)

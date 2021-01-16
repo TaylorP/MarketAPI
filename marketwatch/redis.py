@@ -45,6 +45,7 @@ class RedisDatabase(database.Database):
     # The key for the Redis LIST that contains all of the region IDs
     __REGION_LIST           = 'r'
 
+
     # The key format for a Redis HASH that contains the info data for the
     # matching region ID
     __REGION_INFO_KEY       = 'ri:{}'
@@ -53,9 +54,14 @@ class RedisDatabase(database.Database):
     # matching region ID
     __REGION_SYSTEM_KEY     = 'rs:{}'
 
-    # The key format for a Redis LIST that contains the locaton IDs in a
+    # The key format for a Redis LIST that contains the location IDs in a
     # matching region ID
     __REGION_LOCATION_KEY   = 'rl:{}'
+
+    # The key format for a Redis LIST that contains the structure IDs in a
+    # matching region ID
+    __REGION_STRUCTURE_KEY  = 'rc:{}'
+
 
     # The key format for a Redis HASH that contains the info data for the
     # matching system ID
@@ -65,6 +71,9 @@ class RedisDatabase(database.Database):
     # location ID
     __LOCATION_INFO_KEY     = 'li:{}'
 
+
+    # The key for the Redis LIST that contains all of the type IDs
+    __TYPE_LIST_KEY         = 't'
 
     # The key format for a Redis HASH that contains the info data for the
     # matching item type ID
@@ -114,7 +123,10 @@ class RedisDatabase(database.Database):
     # should be stored
     __LOCATION_FIELDS = [
         ('name'             , 'name'    , str),
+        ('security_status'  , 'sec'     , float),
+        ('is_struct'        , 'isstruct', int),
         ('station_id'       , 'id'      , int),
+        ('system_id'        , 'sid'     , int),
     ]
 
     # Field names -> types from a item type info API request that should
@@ -122,6 +134,7 @@ class RedisDatabase(database.Database):
     __TYPE_FIELDS = [
         ('name'             , 'name'    , str),
         ('type_id'          , 'id'      , int),
+        ('market_group_id'  , 'gid'     , int),
     ]
 
     # Field names -> types from a market group info API request that should
@@ -131,6 +144,7 @@ class RedisDatabase(database.Database):
         ('market_group_id'  , 'id'      , int),
         ('parent_group_id'  , 'pid'     , int),
         ('hastypes'         , 'hastypes', int),
+        ('iid'              , 'iid'     , int),
     ]
 
     # Field names -> types for a market order API request that should be
@@ -146,7 +160,7 @@ class RedisDatabase(database.Database):
         ('range'            , 'range'   , str),
     ]
 
-    def __init__(self, config):
+    def __init__(self, config, db):
         """
         Constructs a new database connection.
 
@@ -159,7 +173,7 @@ class RedisDatabase(database.Database):
         self.__connection = redis.StrictRedis(
             host = config.get('database', 'host'),
             port = config.getint('database', 'port'),
-            db = config.getint('database', 'database'),
+            db = db,
             decode_responses=True)
 
     def set_universe_cache_expiry(self, modify, expire):
@@ -295,6 +309,7 @@ class RedisDatabase(database.Database):
         with stats.Stats.Timer() as timer:
             with self.__connection.pipeline() as conn:
                 location_key = self.__region_location_name(region_id)
+                conn.delete(location_key)
                 conn.rpush(location_key, *location_ids)
                 conn.execute()
 
@@ -302,6 +317,29 @@ class RedisDatabase(database.Database):
             stats.Stats.UPDATE,
             total=len(location_ids),
             changed=len(location_ids),
+            runtime=timer.elapsed())
+
+    def add_region_structures(self, worker, region_id, structure_ids):
+        """
+        Adds the structure IDs in the specified region.
+
+        Args:
+            worker: The marketwatch.worker.Worker containing local state.
+            region_id: The ID of the region that contains the structures.
+            structure_ids: The list of structure IDs.
+        """
+
+        with stats.Stats.Timer() as timer:
+            with self.__connection.pipeline() as conn:
+                structure_key = self.__region_structure_name(region_id)
+                conn.delete(structure_key)
+                conn.sadd(structure_key, *structure_ids)
+                conn.execute()
+
+        worker.stats().update(
+            stats.Stats.UPDATE,
+            total=len(structure_ids),
+            changed=len(structure_ids),
             runtime=timer.elapsed())
 
     def add_location_info(self, worker, location_infos):
@@ -507,7 +545,7 @@ class RedisDatabase(database.Database):
 
     def get_locations(self, region_id):
         """
-        Queries the list of locatons IDs for the given region ID.
+        Queries the list of location IDs for the given region ID.
 
         Args:
             region_id:  The region ID to lookup in the database.
@@ -519,6 +557,21 @@ class RedisDatabase(database.Database):
         location_ids = self.__connection.lrange(
             self.__region_location_name(region_id), 0, -1)
         return [int(location_id) for location_id in location_ids]
+
+    def get_structures(self, region_id):
+        """
+        Queries the list of structure IDs for the given region ID.
+
+        Args:
+            region_id:  The region ID to lookup in the database.
+
+        Returns:
+            The list of structure IDs in the specified region ID.
+        """
+
+        structure_ids = self.__connection.smembers(
+            self.__region_structure_name(region_id))
+        return [int(structure_id) for structure_id in structure_ids]
 
     def get_location_info(self, location_id):
         """
@@ -535,6 +588,17 @@ class RedisDatabase(database.Database):
             self.__LOCATION_FIELDS,
             self.__connection.hgetall(self.__location_info_name(location_id)))
         return location_info
+
+    def get_types(self):
+        """
+        Queries the list of type IDs.
+
+        Returns:
+            The list of type IDs in the datbase.
+        """
+
+        type_ids = self.__connection.lrange(self.__TYPE_LIST_KEY, 0, -1)
+        return [int(type_id) for type_id in type_ids]
 
     def get_type_info(self, type_id):
         """
@@ -592,15 +656,15 @@ class RedisDatabase(database.Database):
         return self.__connection.lrange(
             self.__group_type_name(group_id), 0, -1)
 
-    def get_orders(self, region_id, type_id, orders=None):
+    def get_orders(self, region_id, type_id, system_id=None, orders=None):
         """
         Queries market orders for the specified region ID and type ID.
 
         Args:
-            region_id: The region ID for filtering market orders
-            type_id: The item type ID for the orders to query
-            orders: Optional list in which order infos should be written
-            locations: Optional set in which location IDs should be added
+            region_id: The region ID for filtering market orders.
+            type_id: The item type ID for the orders to query.
+            system_id: Optional system id to filter oders.
+            orders: Optional list in which order infos should be written.
 
         Returns:
             The list of market orders for the item type in the specified
@@ -619,21 +683,23 @@ class RedisDatabase(database.Database):
             for order_id in order_ids:
                 conn.get(order_id)
                 conn.ttl(order_id)
-
             results = conn.execute()
-            index = 0
-            order_index = 0
-            while index < len(results):
-                if not results[index]:
-                    remove_ids.append(order_ids[order_index])
-                else:
-                    order_fields = self.__decode_order(results[index])
+
+        index = 0
+        order_index = 0
+        while index < len(results):
+            if not results[index]:
+                remove_ids.append(order_ids[order_index])
+            else:
+                order_fields = self.__decode_order(results[index])
+                if not system_id or order_fields['sid'] == system_id:
                     ttl = results[index+1]
                     order_fields['age'] = (self.__MARKET_ORDER_TTL - ttl)
+                    order_fields['rid'] = region_id
                     orders.append(order_fields)
 
-                order_index += 1
-                index += 2
+            order_index += 1
+            index += 2
 
         with self.__connection.pipeline() as conn:
             for remove_id in remove_ids:
@@ -653,6 +719,10 @@ class RedisDatabase(database.Database):
     @classmethod
     def __region_location_name(cls, region_id):
         return cls.__REGION_LOCATION_KEY.format(region_id)
+
+    @classmethod
+    def __region_structure_name(cls, region_id):
+        return cls.__REGION_STRUCTURE_KEY.format(region_id)
 
     @classmethod
     def __system_info_name(cls, system_id):

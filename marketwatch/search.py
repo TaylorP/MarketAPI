@@ -27,6 +27,7 @@ Item type name search index
 from enum import Enum
 import os
 
+from whoosh.analysis import RegexTokenizer
 from whoosh.index import create_in, exists_in, open_dir
 from whoosh.fields import NGRAMWORDS, NUMERIC, STORED, Schema
 from whoosh.highlight import WholeFragmenter
@@ -93,6 +94,8 @@ class SearchIndex():
             return []
 
         index = open_dir(self.__index_dir, search_type.name)
+        search_lower = search_string.lower()
+
         with index.searcher() as searcher:
             parser = QueryParser("name", schema=index.schema)
             query = parser.parse(search_string)
@@ -103,17 +106,22 @@ class SearchIndex():
             results = searcher.search(query, filter=parent_filter, limit=limit)
             results.fragmenter = WholeFragmenter()
 
+            prefix_info = []
             result_info = []
             for result in results:
                 info = {
                     'name': result['name'],
                     'highlight': result.highlights('name'),
-                    'id': result['id']
+                    'id': result['id'],
+                    'gid': result['gid']
                 }
 
-                result_info.append(info)
+                if result['name'].lower().startswith(search_lower):
+                    prefix_info.append(info)
+                else:
+                    result_info.append(info)
 
-            return result_info
+            return prefix_info + result_info
 
     def __create_region_index(self, database, rebuild):
         index = self.__create_index(self.Type.REGION, rebuild)
@@ -124,7 +132,8 @@ class SearchIndex():
             region_info = database.get_region_info(region_id)
             writer.add_document(
                 name=region_info['name'],
-                id=region_info['id'])
+                id=region_info['id'],
+                gid=0)
         writer.commit()
 
         index = self.__create_index(self.Type.SYSTEM, rebuild)
@@ -137,7 +146,8 @@ class SearchIndex():
                 writer.add_document(
                     name=system_info['name'],
                     id=system_info['id'],
-                    pid=region_id)
+                    pid=region_id,
+                    gid=region_id)
         writer.commit()
 
     def __create_type_index(self, database, rebuild):
@@ -152,7 +162,8 @@ class SearchIndex():
             type_info = database.get_type_info(type_id)
             writer.add_document(
                 name=type_info['name'],
-                id=type_info['id'])
+                id=type_info['id'],
+                gid=type_info['gid'])
         writer.commit()
 
     def __create_index(self, index_entry, rebuild):
@@ -160,8 +171,14 @@ class SearchIndex():
         if exists_in(self.__index_dir, index_name) and not rebuild:
             return open_dir(self.__index_dir, index_name)
 
+        tokenizer = RegexTokenizer(r'[\w-]+(\.?\w+)*')
         schema = Schema(
-            name=NGRAMWORDS(queryor=True, maxsize=20, stored=True),
+            name=NGRAMWORDS(
+                queryor=True,
+                maxsize=20,
+                stored=True,
+                tokenizer=tokenizer),
             id=STORED,
+            gid=STORED,
             pid=NUMERIC(signed=False, default=0))
         return create_in(self.__index_dir, schema, index_name)

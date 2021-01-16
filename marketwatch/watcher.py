@@ -106,7 +106,32 @@ class Watcher():
 
             time.sleep(self.__config.getint('pool', 'update_rate'))
 
-    def __init_regional_apis(self):
+
+    def __refresh_access(self):
+        if not self.__config.getboolean('job', 'authenticate'):
+            return
+
+        self.__worker_pool.log().info("Refreshing API access token")
+
+        try:
+            data = self.__global_api.fetch_access()
+
+            access_token = data['access_token']
+            refresh_token = data['refresh_token']
+
+            self.__global_api.set_access(access_token, refresh_token)
+            for _, region_api in self.__region_apis.items():
+                region_api.set_access(access_token, refresh_token)
+
+        except:
+            self.__worker_pool.log().exception(
+                "Unable to authenticate with ESI")
+
+            self.__global_api.set_access()
+            for _, region_api in self.__region_apis.items():
+                region_api.set_access()
+
+    def __init_region_apis(self):
         self.__region_apis = {}
 
         for region_id in self.__database.get_regions():
@@ -124,7 +149,7 @@ class Watcher():
         else:
             self.__worker_pool.log().info("Skipping universe update")
 
-        self.__init_regional_apis()
+        self.__init_region_apis()
         self.__universe_cached = False
 
     def __update_groups(self):
@@ -148,6 +173,7 @@ class Watcher():
 
     def __update_orders(self):
         if self.__config.getboolean('job', 'orders'):
+            self.__refresh_access()
             self.__worker_pool.log().info("Updating orders for all regions")
             for _, region_api in self.__region_apis.items():
                 self.__worker_pool.enqueue(tasks.UpdateOrdersTask(region_api))
