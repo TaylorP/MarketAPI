@@ -170,11 +170,21 @@ class RedisDatabase(database.Database):
 
         database.Database.__init__(self)
 
-        self.__connection = redis.StrictRedis(
-            host = config.get('database', 'host'),
-            port = config.getint('database', 'port'),
-            db = db,
-            decode_responses=True)
+        socket = config.get('database', 'unixsocket')
+        if socket:
+            pool = redis.ConnectionPool(
+                connection_class=redis.UnixDomainSocketConnection,
+                path=socket,
+                decode_responses=True)
+            self.__connection = redis.Redis(
+                connection_pool=pool,
+                db = db)
+        else:
+            self.__connection = redis.StrictRedis(
+                host = config.get('database', 'host'),
+                port = config.getint('database', 'port'),
+                db = db,
+                decode_responses=True)
 
     def set_universe_cache_expiry(self, modify, expire):
         """

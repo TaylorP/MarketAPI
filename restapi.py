@@ -10,7 +10,7 @@ from marketwatch import search
 app = FastAPI()
 
 config = configparser.ConfigParser()
-config.read("default.ini")
+config.read("config.ini")
 
 @app.get("/universe/regions")
 def regions(response: Response):

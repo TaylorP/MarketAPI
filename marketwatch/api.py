@@ -237,6 +237,7 @@ class GlobalAPI():
                     break
 
                 num_errors += 1
+                worker.log().info("\tRetrying after %i attempts", num_errors)
                 time.sleep(0.5*num_errors)
 
         worker.stats().update(stats.Stats.REQUEST, runtime=timer.elapsed())
@@ -246,9 +247,13 @@ class GlobalAPI():
         request, etag = self._fetch_api(
             worker, req_url, kwargs, etag, needs_auth)
 
-        if not request or request.status_code >= 400:
+        if request is None:
             worker.stats().update(stats.Stats.REQUEST, total=1, failure=1)
-            return (False, None, request.status_code if request else 403)
+            return (False, None, 403)
+
+        if request.status_code >= 400:
+            worker.stats().update(stats.Stats.REQUEST, total=1, failure=1)
+            return (False, None, request.status_code)
 
         if request.status_code == 304:
             worker.stats().update(stats.Stats.REQUEST, total=1)

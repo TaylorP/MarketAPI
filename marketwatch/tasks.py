@@ -179,8 +179,11 @@ class UpdateGroupInfoTask():
                 worker.log().info("Fetching %d item type infos for group %d",
                     len(group_info['types']), group_id)
                 for type_id in group_info['types']:
-                    type_infos.append(
-                        self.__global_api.fetch_type_info(worker, type_id))
+                    type_info = self.__global_api.fetch_type_info(worker, type_id)
+                    if type_info:
+                        type_infos.append(type_info)
+                    else:
+                        worker.log().warning("Empty type info for %d", type_id)
 
         worker.database().add_type_info(worker, type_infos)
         worker.database().add_market_group_info(worker, group_infos)
