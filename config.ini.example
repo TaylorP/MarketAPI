@@ -1,0 +1,34 @@
+[database]
+database = 0
+host = localhost
+port = 6379
+type = redis
+unixsocket = /var/run/redis/redis.sock
+
+[job]
+authenticate = True
+groups = False
+index = False
+orders = True
+regions = False
+static_time = 11:30
+update_rate = 600
+
+[logging]
+dir = logs
+roll_count = 5
+roll_size = 65536
+shell = True
+
+[pool]
+size = 8
+update_rate = 30
+
+[request]
+agent = mcsheepeater/marketwatch 1.0
+appid = 706ae8d6ac9a4891b9da8c583219861a
+appsecret = NzXy7MVDFaloHffkRMzTMFNGModroKT21DQx1eFH
+refresh_token = aruinFtIhrf0ZPw_z57SzaKOdowsvp-WfZuf-6oV5EsZGH1scPC1P5XXQnAdIkKy
+
+[search]
+index = search
